@@ -350,7 +350,7 @@ function SunGodRays() {
 }
 
 function GltfModel({ url }: { url: string }) {
-  const { scene } = useGLTF(url);
+  const { scene, animations } = useGLTF(url);
   const clonedScene = useMemo(() => {
     const clone = scene.clone();
 
@@ -386,6 +386,29 @@ function GltfModel({ url }: { url: string }) {
 
     return clone;
   }, [scene, url]);
+
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const isPlaying = useStore((state) => state.isPlaying);
+
+  useEffect(() => {
+    if (animations && animations.length > 0 && clonedScene) {
+      const mixer = new THREE.AnimationMixer(clonedScene);
+      mixerRef.current = mixer;
+      const action = mixer.clipAction(animations[0]);
+      action.play();
+      return () => {
+        action.stop();
+        mixer.uncacheRoot(clonedScene);
+      };
+    }
+  }, [animations, clonedScene]);
+
+  useFrame((_, delta) => {
+    if (mixerRef.current && isPlaying) {
+      mixerRef.current.update(delta);
+    }
+  });
+
   return <primitive object={clonedScene} />;
 }
 
@@ -401,6 +424,29 @@ function FbxModel({ url }: { url: string }) {
     });
     return clone;
   }, [fbx]);
+
+  const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const isPlaying = useStore((state) => state.isPlaying);
+
+  useEffect(() => {
+    if (fbx.animations && fbx.animations.length > 0 && clonedScene) {
+      const mixer = new THREE.AnimationMixer(clonedScene);
+      mixerRef.current = mixer;
+      const action = mixer.clipAction(fbx.animations[0]);
+      action.play();
+      return () => {
+        action.stop();
+        mixer.uncacheRoot(clonedScene);
+      };
+    }
+  }, [fbx.animations, clonedScene]);
+
+  useFrame((_, delta) => {
+    if (mixerRef.current && isPlaying) {
+      mixerRef.current.update(delta);
+    }
+  });
+
   return <primitive object={clonedScene} />;
 }
 
