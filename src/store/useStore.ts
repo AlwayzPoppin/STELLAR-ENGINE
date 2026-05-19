@@ -97,7 +97,27 @@ export type EnvironmentSettings = {
   windTurbulence: number;
 };
 
+export interface FoliageInstanceData {
+  id: string;
+  assetUrl: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+}
+
 interface EngineState {
+  activeTool: 'select' | 'foliage';
+  setActiveTool: (tool: 'select' | 'foliage') => void;
+  foliageBrushAssetId: string | null;
+  setFoliageBrushAssetId: (id: string | null) => void;
+  foliageInstances: FoliageInstanceData[];
+  addFoliageInstance: (instance: FoliageInstanceData) => void;
+  clearFoliage: (assetUrl?: string) => void;
+  eraseFoliageInRadius: (point: [number, number, number], radius: number, assetUrl?: string | null) => void;
+  foliageBrushRadius: number;
+  setFoliageBrushRadius: (r: number) => void;
+  foliageBrushDensity: number;
+  setFoliageBrushDensity: (d: number) => void;
   environment: EnvironmentSettings;
   updateEnvironment: (updates: Partial<EnvironmentSettings>) => void;
   objects: SceneObject[];
@@ -167,6 +187,29 @@ interface EngineState {
 export const useStore = create<EngineState>()(
   temporal(
     (set, get) => ({
+      activeTool: 'select',
+      setActiveTool: (tool) => set({ activeTool: tool }),
+      foliageBrushAssetId: null,
+      setFoliageBrushAssetId: (id) => set({ foliageBrushAssetId: id }),
+      foliageInstances: [],
+      addFoliageInstance: (instance) => set((state) => ({ foliageInstances: [...state.foliageInstances, instance] })),
+      clearFoliage: (assetUrl) => set((state) => ({
+        foliageInstances: assetUrl ? state.foliageInstances.filter(i => i.assetUrl !== assetUrl) : []
+      })),
+      eraseFoliageInRadius: (point, radius, assetUrl) => set((state) => ({
+        foliageInstances: state.foliageInstances.filter((inst) => {
+          if (assetUrl && inst.assetUrl !== assetUrl) return true;
+          const dx = inst.position[0] - point[0];
+          const dy = inst.position[1] - point[1];
+          const dz = inst.position[2] - point[2];
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          return dist > radius;
+        })
+      })),
+      foliageBrushRadius: 2.0,
+      setFoliageBrushRadius: (r) => set({ foliageBrushRadius: r }),
+      foliageBrushDensity: 10,
+      setFoliageBrushDensity: (d) => set({ foliageBrushDensity: d }),
       environment: {
         ambientIntensity: 0.2,
         directionalIntensity: 1.5,

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useStore, EnvironmentSettings } from '../store/useStore';
+import { useAssetStore } from '../store/useAssetStore';
 import {
   Settings2,
   SlidersHorizontal,
@@ -11,6 +12,8 @@ import {
   Hash,
   Magnet,
   Eye,
+  Brush,
+  Trash2,
 } from 'lucide-react';
 import { ScrubbableInput } from './ScrubbableInput';
 
@@ -50,7 +53,123 @@ export default function InspectorPanel() {
     toggleEmitters,
     wireframeMode,
     toggleWireframeMode,
+    activeTool,
+    setActiveTool,
+    foliageBrushAssetId,
+    setFoliageBrushAssetId,
+    foliageBrushRadius,
+    setFoliageBrushRadius,
+    foliageBrushDensity,
+    setFoliageBrushDensity,
+    clearFoliage,
+    foliageInstances,
   } = useStore();
+
+  const { assets } = useAssetStore();
+  const models = assets.filter(a => a.type === 'model' && a.url);
+
+  if (activeTool === 'foliage') {
+    return (
+      <div
+        role="region"
+        aria-label="Foliage Painter Panel"
+        className="w-80 bg-bg-surface/80 border-l border-border flex flex-col pointer-events-auto backdrop-blur-md overflow-y-auto select-none"
+      >
+        <div className="px-3 py-2.5 bg-transparent text-xs font-semibold text-text-primary border-b border-border flex justify-between items-center tracking-wide shrink-0">
+          <div className="flex items-center gap-2">
+            <Brush size={14} className="text-emerald-400" />
+            <span>Foliage Painter Settings</span>
+          </div>
+          <button
+            onClick={() => setActiveTool('select')}
+            className="text-[10px] text-text-secondary hover:text-text-primary bg-bg-deep border border-border px-1.5 py-0.5 rounded cursor-pointer"
+          >
+            Exit
+          </button>
+        </div>
+
+        <div className="p-3 space-y-4">
+          <Section title="Brush Type" icon={Box} colorClass="text-sky-400">
+            <div className="space-y-2 w-full">
+              <span className="text-[11px] text-text-secondary block">Select Foliage Asset</span>
+              <div className="grid grid-cols-2 gap-2">
+                {models.map((m) => {
+                  const isSelected = foliageBrushAssetId === m.url;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={() => setFoliageBrushAssetId(m.url || null)}
+                      className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all text-center cursor-pointer min-w-0 ${isSelected ? 'border-accent bg-accent/10 text-text-primary font-semibold' : 'border-border bg-bg-deep/50 text-text-secondary hover:border-text-secondary hover:text-text-primary'}`}
+                    >
+                      <Box size={20} className="mb-1" />
+                      <span className="text-[10px] font-medium truncate w-full block">{m.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Brush Properties" icon={SlidersHorizontal} colorClass="text-emerald-500">
+            <div className="grid grid-cols-[80px_1fr] items-center gap-2 w-full">
+              <span className="text-[11px] text-text-secondary">Radius</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="0.5"
+                  max="10"
+                  step="0.1"
+                  className="w-full accent-accent cursor-pointer"
+                  value={foliageBrushRadius}
+                  onChange={(e) => setFoliageBrushRadius(parseFloat(e.target.value))}
+                />
+                <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border shrink-0">
+                  {foliageBrushRadius.toFixed(1)}m
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-[80px_1fr] items-center gap-2 w-full">
+              <span className="text-[11px] text-text-secondary">Density</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="1"
+                  max="50"
+                  step="1"
+                  className="w-full accent-accent cursor-pointer"
+                  value={foliageBrushDensity}
+                  onChange={(e) => setFoliageBrushDensity(parseInt(e.target.value))}
+                />
+                <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border shrink-0">
+                  {foliageBrushDensity}
+                </span>
+              </div>
+            </div>
+          </Section>
+
+          <Section title="Actions" icon={Settings2} colorClass="text-amber-500">
+            <div className="space-y-2 w-full">
+              <button
+                onClick={() => clearFoliage(foliageBrushAssetId || undefined)}
+                className="w-full py-2 bg-red-500/10 hover:bg-red-500/25 border border-red-500/30 hover:border-red-500/50 rounded-lg text-xs font-semibold text-red-400 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 size={12} />
+                <span>{foliageBrushAssetId ? 'Clear Selected Type' : 'Clear All Foliage'}</span>
+              </button>
+            </div>
+          </Section>
+
+          <div className="text-[10px] text-text-secondary/60 bg-bg-deep/30 border border-border/50 rounded-lg p-3 space-y-1">
+            <div className="font-semibold text-text-secondary">Painter Quick Tips:</div>
+            <div>• Press <span className="font-mono text-text-primary bg-bg-deep px-1 py-0.5 rounded border border-border">P</span> to toggle the painter tool.</div>
+            <div>• <span className="text-accent font-semibold">Click and drag</span> in the viewport to paint foliage on any mesh.</div>
+            <div>• Hold <span className="font-mono text-text-primary bg-bg-deep px-1 py-0.5 rounded border border-border">Shift + Click</span> to erase foliage.</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (selectedIds.length > 1) {
     return (

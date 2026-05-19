@@ -35,6 +35,7 @@ import {
   Wind,
   Droplets,
   Zap,
+  Brush,
 } from 'lucide-react';
 import { useStore as useZustandStore } from 'zustand';
 import { useStore } from '../store/useStore';
@@ -63,6 +64,8 @@ function TopBar() {
     setSnapValue,
     showOverlays,
     toggleOverlays,
+    activeTool,
+    setActiveTool,
   } = useStore();
 
   const { undo, redo, pastStates, futureStates } = useZustandStore(useStore.temporal);
@@ -426,6 +429,17 @@ function TopBar() {
             title="Scale (R)"
           >
             <Scaling size={14} />
+          </button>
+        </div>
+
+        {/* Foliage Painter Tool */}
+        <div className="flex bg-neutral-900/60 border border-neutral-800/50 rounded-lg p-0.5 shadow-inner">
+          <button
+            onClick={() => setActiveTool(activeTool === 'foliage' ? 'select' : 'foliage')}
+            className={`p-1.5 transition-all duration-150 cursor-pointer rounded-md ${activeTool === 'foliage' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm' : 'text-neutral-400 hover:text-neutral-200 border border-transparent'}`}
+            title="Foliage Painter (P)"
+          >
+            <Brush size={14} />
           </button>
         </div>
 

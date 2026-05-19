@@ -1,4 +1,4 @@
-import React, { Suspense, useRef, useState, useMemo, useEffect } from 'react';
+import React, { Suspense, useRef, useState, useMemo, useEffect, useCallback } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import {
   OrbitControls,
@@ -18,7 +18,7 @@ import {
 import { Physics, RigidBody, CuboidCollider, BallCollider } from '@react-three/rapier';
 import { Geometry, Base, Addition, Subtraction, Intersection } from '@react-three/csg';
 import { EffectComposer, Bloom, ToneMapping, Vignette, Outline, Selection, Select, GodRays } from '@react-three/postprocessing';
-import { useStore, SceneObject } from '../store/useStore';
+import { useStore, SceneObject, FoliageInstanceData } from '../store/useStore';
 import { useAssetStore } from '../store/useAssetStore';
 import * as THREE from 'three';
 import { Layers } from 'lucide-react';
@@ -522,6 +522,7 @@ const SceneNode = React.memo(function SceneNode({
   const snapValue = useStore((state) => state.snapValue);
   const showEmitters = useStore((state) => state.showEmitters);
   const selectedIds = useStore((state) => state.selectedIds);
+  const activeTool = useStore((state) => state.activeTool);
 
   const objects = useStore((state) => state.objects);
   const children = useMemo(() => objects.filter((o) => o.parentId === obj.id), [objects, obj.id]);
@@ -794,7 +795,7 @@ const SceneNode = React.memo(function SceneNode({
         groupContent
       )}
 
-      {isSelected && !isPlaying && (
+      {isSelected && !isPlaying && activeTool !== 'foliage' && (
         <TransformControls
           object={ref}
           mode={transformMode}
@@ -1123,6 +1124,10 @@ export default function Viewport() {
       if (e.shiftKey && e.key.toLowerCase() === 'h') {
         useStore.getState().toggleOverlays();
       }
+      if (e.key.toLowerCase() === 'p') {
+        const current = useStore.getState().activeTool;
+        useStore.getState().setActiveTool(current === 'foliage' ? 'select' : 'foliage');
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -1298,6 +1303,8 @@ export default function Viewport() {
           </Suspense>
         </>
         <ExportHelper />
+        <FoliageRenderer />
+        <FoliagePainterController />
 
         {!isPlaying && <CameraController orbitRef={orbitRef} />}
 
@@ -3127,6 +3134,238 @@ function ParticleEmitter({ type, isPlaying, particleProps }: { type: string; isP
         </points>
       )}
     </>
+  );
+}
+
+function FoliageGroup({ url, instances }: { url: string; instances: FoliageInstanceData[] }) {
+  const { scene } = useGLTF(url);
+  const meshRefs = useRef<THREE.InstancedMesh[]>([]);
+
+  const meshes = useMemo(() => {
+    const arr: THREE.Mesh[] = [];
+    scene.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        arr.push(child as THREE.Mesh);
+      }
+    });
+    return arr;
+  }, [scene]);
+
+  const dummy = useMemo(() => new THREE.Object3D(), []);
+
+  useEffect(() => {
+    if (!meshRefs.current.length) return;
+
+    meshes.forEach((_, idx) => {
+      const instancedMesh = meshRefs.current[idx];
+      if (instancedMesh) {
+        instances.forEach((inst, i) => {
+          dummy.position.set(...inst.position);
+          dummy.rotation.set(...inst.rotation);
+          dummy.scale.set(...inst.scale);
+          dummy.updateMatrix();
+          instancedMesh.setMatrixAt(i, dummy.matrix);
+        });
+        instancedMesh.instanceMatrix.needsUpdate = true;
+        instancedMesh.count = instances.length;
+      }
+    });
+  }, [instances, meshes, dummy]);
+
+  return (
+    <group>
+      {meshes.map((m, i) => (
+        <instancedMesh
+          key={m.uuid}
+          ref={(el) => {
+            if (el) meshRefs.current[i] = el;
+          }}
+          args={[m.geometry, m.material, 5000]}
+          castShadow
+          receiveShadow
+        />
+      ))}
+    </group>
+  );
+}
+
+function FoliageRenderer() {
+  const instances = useStore((state) => state.foliageInstances);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, FoliageInstanceData[]>();
+    instances.forEach((inst) => {
+      if (!map.has(inst.assetUrl)) map.set(inst.assetUrl, []);
+      map.get(inst.assetUrl)!.push(inst);
+    });
+    return Array.from(map.entries());
+  }, [instances]);
+
+  return (
+    <>
+      {groups.map(([url, groupInstances]) => (
+        <FoliageGroup key={url} url={url} instances={groupInstances} />
+      ))}
+    </>
+  );
+}
+
+function FoliagePainterController() {
+  const { camera, raycaster, scene, gl } = useThree();
+  const activeTool = useStore((s) => s.activeTool);
+  const brushAssetUrl = useStore((s) => s.foliageBrushAssetId);
+  const brushRadius = useStore((s) => s.foliageBrushRadius);
+  const brushDensity = useStore((s) => s.foliageBrushDensity);
+  const addFoliageInstance = useStore((s) => s.addFoliageInstance);
+  const eraseFoliageInRadius = useStore((s) => s.eraseFoliageInRadius);
+
+  const [isPainting, setIsPainting] = useState(false);
+  const mouse = useRef({ x: 0, y: 0 });
+  const isShiftDown = useRef(false);
+  const cursorRef = useRef<THREE.Mesh>(null);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') isShiftDown.current = true;
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') isShiftDown.current = false;
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  const paint = useCallback(() => {
+    if (!brushAssetUrl) return;
+
+    const exportScene = scene.getObjectByName('export_scene');
+    if (!exportScene) return;
+
+    raycaster.setFromCamera(mouse.current, camera);
+    const intersects = raycaster.intersectObjects(exportScene.children, true);
+
+    if (intersects.length > 0) {
+      const hit = intersects[0];
+      const point = hit.point;
+
+      if (isShiftDown.current) {
+        eraseFoliageInRadius([point.x, point.y, point.z], brushRadius, brushAssetUrl);
+      } else {
+        const countToSpawn = Math.max(1, Math.floor(brushDensity / 3));
+        
+        for (let i = 0; i < countToSpawn; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = Math.sqrt(Math.random()) * brushRadius;
+          const offset = new THREE.Vector3(Math.cos(angle) * dist, 0, Math.sin(angle) * dist);
+
+          const rayStart = point.clone().add(offset).add(new THREE.Vector3(0, 10, 0));
+          const snapRay = new THREE.Raycaster(rayStart, new THREE.Vector3(0, -1, 0));
+          const snapIntersects = snapRay.intersectObjects(exportScene.children, true);
+
+          if (snapIntersects.length > 0) {
+            const snapHit = snapIntersects[0];
+            const rotY = Math.random() * Math.PI * 2;
+            const rotX = (Math.random() - 0.5) * 0.1;
+            const rotZ = (Math.random() - 0.5) * 0.1;
+            const baseScale = 0.7 + Math.random() * 0.5;
+
+            addFoliageInstance({
+              id: `fol_${crypto.randomUUID()}`,
+              assetUrl: brushAssetUrl,
+              position: [snapHit.point.x, snapHit.point.y, snapHit.point.z],
+              rotation: [rotX, rotY, rotZ],
+              scale: [baseScale, baseScale, baseScale],
+            });
+          }
+        }
+      }
+    }
+  }, [brushAssetUrl, brushRadius, brushDensity, camera, raycaster, scene, addFoliageInstance, eraseFoliageInRadius]);
+
+  useFrame(() => {
+    if (activeTool !== 'foliage') return;
+
+    const exportScene = scene.getObjectByName('export_scene');
+    if (!exportScene) return;
+
+    raycaster.setFromCamera(mouse.current, camera);
+    const intersects = raycaster.intersectObjects(exportScene.children, true);
+
+    if (intersects.length > 0) {
+      const hit = intersects[0];
+      if (cursorRef.current) {
+        cursorRef.current.position.copy(hit.point);
+        const lookTarget = hit.point.clone().add(hit.face?.normal || new THREE.Vector3(0, 1, 0));
+        cursorRef.current.lookAt(lookTarget);
+        cursorRef.current.rotateX(Math.PI / 2);
+        cursorRef.current.visible = true;
+      }
+    } else {
+      if (cursorRef.current) cursorRef.current.visible = false;
+    }
+
+    if (isPainting) {
+      paint();
+    }
+  });
+
+  useEffect(() => {
+    if (activeTool !== 'foliage') {
+      setIsPainting(false);
+      return;
+    }
+
+    const domElement = gl.domElement;
+
+    const handlePointerDown = (e: PointerEvent) => {
+      if (e.button === 0) {
+        setIsPainting(true);
+        const rect = domElement.getBoundingClientRect();
+        mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      }
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const rect = domElement.getBoundingClientRect();
+      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (e.button === 0) {
+        setIsPainting(false);
+      }
+    };
+
+    domElement.addEventListener('pointerdown', handlePointerDown);
+    domElement.addEventListener('pointermove', handlePointerMove);
+    domElement.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      domElement.removeEventListener('pointerdown', handlePointerDown);
+      domElement.removeEventListener('pointermove', handlePointerMove);
+      domElement.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [activeTool, gl.domElement]);
+
+  if (activeTool !== 'foliage') return null;
+
+  return (
+    <mesh ref={cursorRef} visible={false}>
+      <ringGeometry args={[brushRadius - 0.05, brushRadius, 64]} />
+      <meshBasicMaterial
+        color={isShiftDown.current ? '#ef4444' : '#10b981'}
+        transparent
+        opacity={0.8}
+        depthWrite={false}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
   );
 }
 
