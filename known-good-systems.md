@@ -43,3 +43,13 @@
 * **Cumulative Wind & Sway Physics**: Integrates sine-wave turbulence fluctuating wind strength by +/- 30% and swinging wind direction by +/- 15 degrees, with dynamic convection drafts and size decay lifecycles.
 * **Live Dynamic Verification**: Fully verified at 144 FPS in-editor. Real-time updates hot-reload active threeJS buffers seamlessly with 0 compilation warnings.
 
+---
+
+### **Contextual 3D Rigging Workspace & Bone Lab (New)**
+* **Absolute Side-Drawer Overlay Layout**: Restructured `App.tsx` and `BottomPanel.tsx` to slide the animation timeline and skeletal rigger out of the bottom dock and into an absolute-positioned right side-drawer. This maximizes editor viewport space.
+* **Isolated 3D Rigging Workspace**: Running an isolated React Three Fiber `<Canvas>` sandboxed from the main editor viewport. Renders the active mesh, primitive shapes, or external `.glb` / `.gltf` / `.fbx` models cleanly inside the side workspace panel.
+* **Direct Bone Spawning**: Interactive "+ ADD BONE" spawning triggers hierarchically nested joints (`JointData[]`) mapped in gold and connected with custom 3D glowing golden paths using `@react-three/drei` `<Line>`.
+* **TransformControls Translation Bind**: Interactive Translate gizmos are anchored on selected joint spheres. Grabbing and translating a bone in 3D dynamically updates its coordinates in the global store in real time, with immediate input field reflection in the Joint Settings tab.
+* **Live browser and unit safety verified**: Tested successfully at stable frame rates with zero compilation warnings or type safety failures.
+
+
