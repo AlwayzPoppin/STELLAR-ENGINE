@@ -7,7 +7,7 @@ function BottomPanel(): JSX.Element {
   const [activeTab, setActiveTab] = useState('browser');
   const { assets, addAsset, deleteAsset, isLoading, error } = useAssetStore();
   const openScript = useStore((s) => s.openScript);
-  const { objects, selectedIds, activeTool, setActiveTool, updateJoint } = useStore();
+  const { objects, selectedIds, activeTool, setActiveTool, updateJoint, toggleBottomPanel } = useStore();
 
   const selectedId = selectedIds[0] || null;
   const selectedObj = objects.find((o) => o.id === selectedId);
@@ -84,48 +84,58 @@ function BottomPanel(): JSX.Element {
           })}
         </div>
 
-        {activeTab === 'browser' && (
-          <div className="flex gap-3 text-text-secondary items-center pb-2 pr-2">
-            <div className="relative flex items-center">
-              <Search size={12} className="absolute left-2 pointer-events-none" />
+        <div className="flex gap-3 text-text-secondary items-center pb-2 pr-2">
+          {activeTab === 'browser' && (
+            <>
+              <div className="relative flex items-center">
+                <Search size={12} className="absolute left-2 pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="Search assets..."
+                  className="bg-bg-deep border border-border rounded pl-6 pr-2 py-1 text-[10px] text-text-primary focus:outline-none focus:border-accent w-40 placeholder:text-text-secondary/50"
+                />
+              </div>
+              <button
+                onClick={() => document.getElementById('asset-upload')?.click()}
+                className="flex items-center gap-1.5 text-[10px] font-medium hover:text-text-primary bg-bg-deep border border-border px-2 py-1 rounded transition-colors"
+              >
+                <Upload size={12} /> Import
+              </button>
               <input
-                type="text"
-                placeholder="Search assets..."
-                className="bg-bg-deep border border-border rounded pl-6 pr-2 py-1 text-[10px] text-text-primary focus:outline-none focus:border-accent w-40 placeholder:text-text-secondary/50"
-              />
-            </div>
-            <button
-              onClick={() => document.getElementById('asset-upload')?.click()}
-              className="flex items-center gap-1.5 text-[10px] font-medium hover:text-text-primary bg-bg-deep border border-border px-2 py-1 rounded transition-colors"
-            >
-              <Upload size={12} /> Import
-            </button>
-            <input
-              id="asset-upload"
-              type="file"
-              accept=".glb,.gltf,.png,.jpg,.jpeg,.js,.ts"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  let type: 'material' | 'model' | 'scene' | 'image' | 'script' = 'model';
-                  if (file.name.endsWith('.png') || file.name.endsWith('.jpg') || file.name.endsWith('.jpeg')) {
-                    type = 'image';
-                  } else if (file.name.endsWith('.js') || file.name.endsWith('.ts')) {
-                    type = 'script';
+                id="asset-upload"
+                type="file"
+                accept=".glb,.gltf,.png,.jpg,.jpeg,.js,.ts"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    let type: 'material' | 'model' | 'scene' | 'image' | 'script' = 'model';
+                    if (file.name.endsWith('.png') || file.name.endsWith('.jpg') || file.name.endsWith('.jpeg')) {
+                      type = 'image';
+                    } else if (file.name.endsWith('.js') || file.name.endsWith('.ts')) {
+                      type = 'script';
+                    }
+                    addAsset({
+                      id: crypto.randomUUID(),
+                      name: file.name,
+                      type: type,
+                    });
+                    // Reset the input so the same file can be uploaded again if needed
+                    e.target.value = '';
                   }
-                  addAsset({
-                    id: crypto.randomUUID(),
-                    name: file.name,
-                    type: type,
-                  });
-                  // Reset the input so the same file can be uploaded again if needed
-                  e.target.value = '';
-                }
-              }}
-            />
-          </div>
-        )}
+                }}
+              />
+            </>
+          )}
+
+          <button
+            onClick={toggleBottomPanel}
+            className="text-text-secondary hover:text-text-primary p-0.5 hover:bg-neutral-800 rounded transition-colors cursor-pointer flex items-center justify-center"
+            title="Collapse Panel"
+          >
+            <ChevronDown size={13} />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto">

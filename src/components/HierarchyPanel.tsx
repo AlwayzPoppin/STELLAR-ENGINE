@@ -8,6 +8,7 @@ import {
   Lightbulb,
   Folder,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Search,
   Sun,
@@ -223,6 +224,7 @@ export default function HierarchyPanel() {
   const duplicateObject = useStore((state) => state.duplicateObject);
   const groupSelected = useStore((state) => state.groupSelected);
   const setRenamingId = useStore((state) => state.setRenamingId);
+  const toggleSidebar = useStore((state) => state.toggleSidebar);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
@@ -287,7 +289,14 @@ export default function HierarchyPanel() {
   return (
     <div role="region" aria-label="Hierarchy Panel (Explorer)" className="flex flex-col h-full overflow-hidden select-none bg-bg-surface/80 backdrop-blur-md">
       <div className="px-3 py-2 bg-transparent text-xs font-semibold text-text-primary border-b border-border shadow-sm flex justify-between items-center tracking-wide">
-        Explorer
+        <span>Explorer</span>
+        <button
+          onClick={toggleSidebar}
+          className="text-text-secondary hover:text-text-primary p-0.5 hover:bg-neutral-800 rounded transition-colors cursor-pointer flex items-center justify-center"
+          title="Collapse Panel"
+        >
+          <ChevronLeft size={13} />
+        </button>
       </div>
 
       <div className="p-1 px-2 border-b border-border bg-transparent shrink-0">

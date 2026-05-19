@@ -1445,31 +1445,27 @@ export default function Viewport() {
         </div>
       </div>
 
-      {/* Left Sidebar Collapse/Expand Toggle Button */}
-      <button
-        onClick={toggleSidebar}
-        className={`absolute top-[48%] -translate-y-1/2 left-0 z-40 w-4 h-14 bg-bg-panel/85 hover:bg-bg-panel border-y border-r border-border hover:text-amber-400 rounded-r-md flex items-center justify-center transition-all cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.5)] group`}
-        title={sidebarVisible ? "Collapse Left Panel" : "Expand Left Panel"}
-      >
-        {sidebarVisible ? (
-          <ChevronLeft size={12} className="group-hover:scale-110 transition-transform" />
-        ) : (
-          <ChevronRight size={12} className="group-hover:scale-110 transition-transform text-amber-400" />
-        )}
-      </button>
+      {/* LEFT SIDEBAR GHOST TOGGLE */}
+      {!sidebarVisible && (
+        <button
+          onClick={toggleSidebar}
+          className="absolute left-0 top-1/2 -translate-y-1/2 p-1 bg-neutral-900/80 border border-neutral-700/50 rounded-r-md text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 transition-all z-50 cursor-pointer shadow-lg"
+          title="Open Sidebar"
+        >
+          <ChevronRight size={16} />
+        </button>
+      )}
 
-      {/* Bottom Panel Collapse/Expand Toggle Button */}
-      <button
-        onClick={toggleBottomPanel}
-        className={`absolute bottom-0 left-[50%] -translate-x-1/2 z-40 w-14 h-4 bg-bg-panel/85 hover:bg-bg-panel border-x border-t border-border hover:text-amber-400 rounded-t-md flex items-center justify-center transition-all cursor-pointer shadow-[0_-4px_12px_rgba(0,0,0,0.5)] group`}
-        title={bottomPanelVisible ? "Collapse Bottom Panel" : "Expand Bottom Panel"}
-      >
-        {bottomPanelVisible ? (
-          <ChevronDown size={12} className="group-hover:scale-110 transition-transform" />
-        ) : (
-          <ChevronUp size={12} className="group-hover:scale-110 transition-transform text-amber-400" />
-        )}
-      </button>
+      {/* BOTTOM PANEL GHOST TOGGLE */}
+      {!bottomPanelVisible && (
+        <button
+          onClick={toggleBottomPanel}
+          className="absolute bottom-0 left-1/2 -translate-x-1/2 p-1 bg-neutral-900/80 border border-neutral-700/50 rounded-t-md text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 transition-all z-50 cursor-pointer shadow-lg"
+          title="Open Bottom Panel"
+        >
+          <ChevronUp size={16} />
+        </button>
+      )}
     </div>
   );
 }
