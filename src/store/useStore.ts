@@ -294,6 +294,14 @@ export const useStore = create<EngineState>()(
           material: { color: '#222222', roughness: 0.1, metalness: 0.1, envMapIntensity: 0.5 },
         },
         {
+          id: 'starter_player',
+          name: 'Starter Player',
+          type: 'group',
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+        {
           id: 'obj_player',
           name: 'Test Player',
           type: 'fbx',
@@ -305,6 +313,7 @@ export const useStore = create<EngineState>()(
           physicsMass: 80,
           physicsCollisions: true,
           visible: true,
+          parentId: 'starter_player',
         },
         {
           id: 'obj_sun',
