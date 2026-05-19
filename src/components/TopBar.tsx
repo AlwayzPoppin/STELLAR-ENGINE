@@ -36,6 +36,7 @@ import {
   Droplets,
   Zap,
   Brush,
+  Clapperboard,
 } from 'lucide-react';
 import { useStore as useZustandStore } from 'zustand';
 import { useStore } from '../store/useStore';
@@ -73,6 +74,7 @@ function TopBar() {
   const [isProjectMenuOpen, setIsProjectMenuOpen] = React.useState(false);
   const [isInsertMenuOpen, setIsInsertMenuOpen] = React.useState(false);
   const [isEffectsMenuOpen, setIsEffectsMenuOpen] = React.useState(false);
+  const [isAnimationMenuOpen, setIsAnimationMenuOpen] = React.useState(false);
   const [isSnapMenuOpen, setIsSnapMenuOpen] = React.useState(false);
 
   // Accordion toggle states for Insert menu
@@ -399,6 +401,64 @@ function TopBar() {
                   </button>
                 </div>
 
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Animation Menu Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => { setIsAnimationMenuOpen(!isAnimationMenuOpen); setIsInsertMenuOpen(false); setIsEffectsMenuOpen(false); }}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150 shadow-sm cursor-pointer ${
+              isAnimationMenuOpen
+                ? 'bg-neutral-900 text-white border-neutral-700 ring-1 ring-neutral-700'
+                : 'bg-neutral-900/40 text-neutral-200 border-neutral-800 hover:bg-neutral-900/80 hover:border-neutral-700'
+            }`}
+          >
+            <Clapperboard size={14} className="text-amber-400" style={{ filter: 'drop-shadow(0 0 2px rgba(245,158,11,0.4))' }} />
+            <span>Animation</span>
+            <ChevronDown size={12} className={`text-neutral-400 transition-transform duration-200 ${isAnimationMenuOpen ? 'rotate-180 text-amber-400' : ''}`} />
+          </button>
+
+          {isAnimationMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setIsAnimationMenuOpen(false)} />
+              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-52 rounded-lg bg-neutral-950 border border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in slide-in-from-top-1 duration-100 flex flex-col gap-1">
+                <div className="px-2 py-1 text-[9px] font-bold tracking-wider text-neutral-500 uppercase">Animation Tools</div>
+                
+                <button
+                  onClick={() => {
+                    setActiveTool(activeTool === 'animation_path' ? 'select' : 'animation_path');
+                    setIsAnimationMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors text-left cursor-pointer ${activeTool === 'animation_path' ? 'bg-amber-500/10 text-amber-400 font-semibold' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Brush size={14} className={activeTool === 'animation_path' ? 'text-amber-400' : 'text-neutral-400'} />
+                    <span>Path Painter (Draw Spline)</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsAnimationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-neutral-300 hover:bg-neutral-900 hover:text-white transition-colors text-left cursor-pointer"
+                >
+                  <Play size={14} className="text-neutral-400" />
+                  <span>Play Animation Path</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsAnimationMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-neutral-300 hover:bg-neutral-900 hover:text-white transition-colors text-left cursor-pointer"
+                >
+                  <Trash2 size={14} className="text-neutral-400" />
+                  <span>Clear Selected Path</span>
+                </button>
               </div>
             </>
           )}

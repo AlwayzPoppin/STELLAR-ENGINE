@@ -64,6 +64,7 @@ export type SceneObject = {
     applyPhysics?: boolean;
     spread?: number;
   };
+  animationPath?: [number, number, number][];
 };
 
 export type EnvironmentSettings = {
@@ -106,8 +107,8 @@ export interface FoliageInstanceData {
 }
 
 interface EngineState {
-  activeTool: 'select' | 'foliage';
-  setActiveTool: (tool: 'select' | 'foliage') => void;
+  activeTool: 'select' | 'foliage' | 'animation_path';
+  setActiveTool: (tool: 'select' | 'foliage' | 'animation_path') => void;
   foliageBrushAssetId: string | null;
   setFoliageBrushAssetId: (id: string | null) => void;
   foliageInstances: FoliageInstanceData[];
