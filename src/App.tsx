@@ -41,7 +41,7 @@ export default function App() {
       <TopBar />
 
       <main className={`flex-1 grid grid-cols-1 gap-px bg-border overflow-hidden transition-all duration-300 ${
-        sidebarVisible ? 'lg:grid-cols-[240px_1fr_300px]' : 'lg:grid-cols-[0px_1fr_300px]'
+        sidebarVisible ? 'lg:grid-cols-[240px_1fr_300px]' : 'lg:grid-cols-[1fr_300px]'
       } ${
         bottomPanelVisible ? 'grid-rows-[1fr_200px]' : 'grid-rows-[1fr_0px]'
       }`}>
@@ -76,7 +76,9 @@ export default function App() {
 
         {/* Bottom Panel - Content/Console */}
         {bottomPanelVisible && (
-          <section className="bg-bg-surface col-span-1 lg:col-span-3 flex flex-col overflow-hidden">
+          <section className={`bg-bg-surface col-span-1 flex flex-col overflow-hidden ${
+            sidebarVisible ? 'lg:col-span-3' : 'lg:col-span-2'
+          }`}>
             <BottomPanel />
           </section>
         )}
