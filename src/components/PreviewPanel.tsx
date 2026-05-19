@@ -1,7 +1,7 @@
 import React, { Suspense, useMemo, useRef, useState } from 'react';
 import { useStore, JointData } from '../store/useStore';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, TransformControls, useGLTF, Line } from '@react-three/drei';
+import { OrbitControls, TransformControls, useGLTF, useFBX, Line } from '@react-three/drei';
 import { Bone, Clapperboard, Plus, X, Trash2, Settings } from 'lucide-react';
 import * as THREE from 'three';
 
@@ -17,7 +17,23 @@ function MiniGltfModel({ url }: { url: string }) {
       }
     });
     return cl;
-  }, [scene]);
+  }, [scene, url]);
+  return <primitive object={clone} />;
+}
+
+// Lightweight FBX loader for the mini-viewport
+function MiniFbxModel({ url }: { url: string }) {
+  const fbx = useFBX(url);
+  const clone = useMemo(() => {
+    const cl = fbx.clone();
+    cl.traverse((child: any) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    return cl;
+  }, [fbx, url]);
   return <primitive object={clone} />;
 }
 
@@ -183,9 +199,11 @@ export default function PreviewPanel() {
                 <group>
                   {/* Asset Geometry */}
                   {asset.type === 'gltf' && asset.url ? (
-                    <MiniGltfModel url={asset.url} />
+                    <MiniGltfModel key={asset.url} url={asset.url} />
+                  ) : asset.type === 'fbx' && asset.url ? (
+                    <MiniFbxModel key={asset.url} url={asset.url} />
                   ) : (
-                    <MiniMeshModel geometry={asset.geometry} material={asset.material} />
+                    <MiniMeshModel key={asset.id} geometry={asset.geometry} material={asset.material} />
                   )}
 
                   {/* Render bones hierarchy links */}
