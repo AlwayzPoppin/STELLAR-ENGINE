@@ -29,6 +29,7 @@ export const useAssetStore = create<AssetStore>((set) => ({
     { id: 'short_grass', name: 'Short Grass', type: 'model', url: '/Meshy_AI_short_grass_0519031623_texture.glb' },
     { id: 'rocky_mountain', name: 'Rocky Mountain', type: 'model', url: '/rocky+mountain+3d+model.glb' },
     { id: 'stylized_tree', name: 'Stylized Tree', type: 'model', url: '/stylized+tree+3d+model.glb' },
+    { id: 'dirt_ground', name: 'Dirt Ground', type: 'model', url: '/Meshy_AI_dirt_ground_0519042354_texture.glb' },
     { id: '5', name: 'BehaviorScript.js', type: 'script', content: `// BehaviorScript.js
 // Runs every frame while PLAY mode is active.
 // 'self' is the live THREE.Object3D — mutate it directly!
