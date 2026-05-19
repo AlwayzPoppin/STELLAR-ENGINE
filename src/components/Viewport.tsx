@@ -1172,16 +1172,28 @@ export default function Viewport() {
       try {
         const asset = JSON.parse(assetData);
         if (asset.type === 'model' || asset.type === 'scene') {
-          addObject({
-            id: `obj_${crypto.randomUUID()}`,
-            name: asset.name,
-            type: 'mesh',
-            geometry: 'box', // Default to box for now
-            position: [0, 1, 0],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-            material: { color: '#ffffff', roughness: 0.5, metalness: 0, envMapIntensity: 1 },
-          });
+          if (asset.url) {
+            addObject({
+              id: `obj_${crypto.randomUUID()}`,
+              name: asset.name,
+              type: 'gltf',
+              url: asset.url,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+            });
+          } else {
+            addObject({
+              id: `obj_${crypto.randomUUID()}`,
+              name: asset.name,
+              type: 'mesh',
+              geometry: 'box', // Default to box for now
+              position: [0, 1, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              material: { color: '#ffffff', roughness: 0.5, metalness: 0, envMapIntensity: 1 },
+            });
+          }
         } else if (asset.type === 'material') {
           addObject({
             id: `obj_${crypto.randomUUID()}`,
