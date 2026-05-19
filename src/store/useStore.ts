@@ -203,6 +203,7 @@ interface EngineState {
   toggleInspector: () => void;
   previewedAssetId: string | null;
   setPreviewedAsset: (id: string | null) => void;
+  getPreviewObject: (id: string | null) => SceneObject | undefined;
 }
 
 export const useStore = create<EngineState>()(
@@ -776,6 +777,7 @@ export const useStore = create<EngineState>()(
       toggleInspector: () => set((state) => ({ inspectorVisible: !state.inspectorVisible })),
       previewedAssetId: null,
       setPreviewedAsset: (id) => set({ previewedAssetId: id }),
+      getPreviewObject: (id) => get().objects.find((o) => o.id === id),
     }),
     {
       partialize: (state) => ({ objects: state.objects, environment: state.environment }),
