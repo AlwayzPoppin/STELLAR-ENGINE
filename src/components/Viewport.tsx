@@ -722,7 +722,7 @@ const SceneNode = React.memo(function SceneNode({
       </>
 
       {(activeTool === 'skeleton_rig' || showOverlays) && obj.joints && (
-        <SkeletalVisualizer joints={obj.joints} />
+        <SkeletalVisualizer joints={obj.joints} parentScale={obj.scale} />
       )}
 
       {children.map((child) => (
@@ -3391,8 +3391,14 @@ const ConnectionLine = React.memo(function ConnectionLine({ start, end }: { star
   );
 });
 
-const SkeletalVisualizer = React.memo(function SkeletalVisualizer({ joints }: { joints?: any[] }) {
+const SkeletalVisualizer = React.memo(function SkeletalVisualizer({ joints, parentScale = [1, 1, 1] }: { joints?: any[], parentScale?: [number, number, number] }) {
   if (!joints || joints.length === 0) return null;
+
+  const visualScale = useMemo(() => {
+    const s = parentScale || [1, 1, 1];
+    const maxScale = Math.max(s[0], s[1], s[2]);
+    return 1 / (maxScale || 1);
+  }, [parentScale]);
 
   const absolutePositions = useMemo(() => {
     const absolute: Record<string, THREE.Vector3> = {};
@@ -3434,13 +3440,13 @@ const SkeletalVisualizer = React.memo(function SkeletalVisualizer({ joints }: { 
           <group key={joint.id}>
             {/* Glowing joint node sphere */}
             <mesh position={absPos}>
-              <sphereGeometry args={[0.045, 16, 16]} />
+              <sphereGeometry args={[0.045 * visualScale, 16, 16]} />
               <meshBasicMaterial color="#f59e0b" depthTest={false} transparent opacity={0.9} />
             </mesh>
 
             {/* Subtle orbital pointer ring */}
             <mesh position={absPos} rotation={[Math.PI / 2, 0, 0]}>
-              <ringGeometry args={[0.07, 0.08, 32]} />
+              <ringGeometry args={[0.07 * visualScale, 0.08 * visualScale, 32]} />
               <meshBasicMaterial color="#fbbf24" depthTest={false} transparent opacity={0.4} />
             </mesh>
 

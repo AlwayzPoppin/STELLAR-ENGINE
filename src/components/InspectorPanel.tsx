@@ -135,11 +135,12 @@ export default function InspectorPanel() {
               <span className="font-mono tracking-tight text-neutral-400">Skeleton Hierarchy</span>
               <button
                 onClick={() => {
+                  const scaleOffset = 0.35 / (selectedObj.scale[1] || 1);
                   const newJointId = `j_${crypto.randomUUID()}`;
                   addJoint(selectedObj.id, {
                     id: newJointId,
                     name: `Joint_${joints.length + 1}`,
-                    position: [0, joints.length > 0 ? 0.3 : 0, 0],
+                    position: [0, joints.length > 0 ? scaleOffset : 0, 0],
                     rotation: [0, 0, 0],
                     parentId: joints.length > 0 ? joints[joints.length - 1].id : null,
                   });
