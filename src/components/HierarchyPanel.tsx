@@ -125,6 +125,9 @@ const TreeItem = React.memo(function TreeItem({ obj, depth }: { obj: SceneObject
         onClick={(e) => {
           e.stopPropagation();
           selectObject(obj.id, e.shiftKey || e.ctrlKey || e.metaKey);
+          if (obj.joints && obj.joints.length > 0) {
+            useStore.getState().setPreviewedAsset(obj.id);
+          }
         }}
         onContextMenu={(e) => {
           e.preventDefault();

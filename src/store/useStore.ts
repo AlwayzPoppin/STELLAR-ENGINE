@@ -201,6 +201,8 @@ interface EngineState {
   toggleSidebar: () => void;
   toggleBottomPanel: () => void;
   toggleInspector: () => void;
+  previewedAssetId: string | null;
+  setPreviewedAsset: (id: string | null) => void;
 }
 
 export const useStore = create<EngineState>()(
@@ -772,6 +774,8 @@ export const useStore = create<EngineState>()(
       toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
       toggleBottomPanel: () => set((state) => ({ bottomPanelVisible: !state.bottomPanelVisible })),
       toggleInspector: () => set((state) => ({ inspectorVisible: !state.inspectorVisible })),
+      previewedAssetId: null,
+      setPreviewedAsset: (id) => set({ previewedAssetId: id }),
     }),
     {
       partialize: (state) => ({ objects: state.objects, environment: state.environment }),

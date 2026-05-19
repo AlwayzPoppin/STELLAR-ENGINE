@@ -9,6 +9,7 @@ import ContextMenu from './components/ContextMenu';
 import ViewportTabBar from './components/ViewportTabBar';
 import ScriptEditorView from './components/ScriptEditorView';
 import RightToolbar from './components/RightToolbar';
+import PreviewPanel from './components/PreviewPanel';
 
 export default function App() {
   const activeScriptId = useStore((s) => s.activeScriptId);
@@ -76,9 +77,10 @@ export default function App() {
 
           {/* Document area — WebGL stays mounted via CSS hidden to preserve context */}
           <div className="flex-1 relative overflow-hidden">
-            <div className={activeScriptId === null ? 'block h-full' : 'hidden'}>
+            <div className={activeScriptId === null ? 'block h-full relative' : 'hidden'}>
               <Viewport />
               <RightToolbar />
+              <PreviewPanel />
             </div>
             {activeScriptId !== null && (
               <ScriptEditorView assetId={activeScriptId} />
