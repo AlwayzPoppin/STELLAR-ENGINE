@@ -288,14 +288,14 @@ export default function HierarchyPanel() {
 
   return (
     <div role="region" aria-label="Hierarchy Panel (Explorer)" className="flex flex-col h-full overflow-hidden select-none bg-bg-surface/80 backdrop-blur-md">
-      <div className="px-3 py-2 bg-transparent text-xs font-semibold text-text-primary border-b border-border shadow-sm flex justify-between items-center tracking-wide">
-        <span>Explorer</span>
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-neutral-900/50">
+        <span className="text-[10px] font-bold tracking-widest uppercase text-neutral-500">Explorer</span>
         <button
           onClick={toggleSidebar}
-          className="text-text-secondary hover:text-text-primary p-0.5 hover:bg-neutral-800 rounded transition-colors cursor-pointer flex items-center justify-center"
+          className="p-1 hover:bg-neutral-800 rounded-md text-neutral-500 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
           title="Collapse Panel"
         >
-          <ChevronLeft size={13} />
+          <ChevronLeft size={14} />
         </button>
       </div>
 

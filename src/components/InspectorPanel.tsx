@@ -8,6 +8,7 @@ import {
   Layers,
   Box,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Hash,
   Magnet,
@@ -68,6 +69,7 @@ export default function InspectorPanel() {
     addJoint,
     updateJoint,
     deleteJoint,
+    toggleInspector,
   } = useStore();
 
   const { assets } = useAssetStore();
@@ -1014,9 +1016,25 @@ export default function InspectorPanel() {
 
   if (!selectedObj) {
     return (
-      <div className="flex flex-col h-full bg-bg-surface border-l border-border text-xs text-text-secondary/50 items-center justify-center p-6 text-center select-none">
-        <SlidersHorizontal size={32} className="mb-3 opacity-20" />
-        Select an object in the viewport or outliner to inspect properties.
+      <div
+        role="region"
+        aria-label="Object Properties Inspector"
+        className="flex flex-col h-full select-none bg-bg-surface/80 backdrop-blur-md"
+      >
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-neutral-900/50">
+          <span className="text-[10px] font-bold tracking-widest uppercase text-neutral-500">Inspector</span>
+          <button
+            onClick={toggleInspector}
+            className="p-1 hover:bg-neutral-800 rounded-md text-neutral-500 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+            title="Collapse Panel"
+          >
+            <ChevronRight size={14} />
+          </button>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-xs text-text-secondary/50">
+          <SlidersHorizontal size={32} className="mb-3 opacity-20" />
+          Select an object in the viewport or outliner to inspect properties.
+        </div>
       </div>
     );
   }
@@ -1045,8 +1063,15 @@ export default function InspectorPanel() {
       aria-label="Object Properties Inspector"
       className="flex flex-col h-full overflow-y-auto select-none bg-bg-surface/80 backdrop-blur-md"
     >
-      <div className="px-3 py-2.5 bg-transparent text-xs font-semibold text-text-primary border-b border-border flex justify-between items-center tracking-wide">
-        Properties
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-neutral-900/50">
+        <span className="text-[10px] font-bold tracking-widest uppercase text-neutral-500">Inspector</span>
+        <button
+          onClick={toggleInspector}
+          className="p-1 hover:bg-neutral-800 rounded-md text-neutral-500 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+          title="Collapse Panel"
+        >
+          <ChevronRight size={14} />
+        </button>
       </div>
 
       <div className="p-3 space-y-4">

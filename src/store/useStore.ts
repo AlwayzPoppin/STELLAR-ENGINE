@@ -197,8 +197,10 @@ interface EngineState {
   pasteProperties: (targetId: string) => void;
   sidebarVisible: boolean;
   bottomPanelVisible: boolean;
+  inspectorVisible: boolean;
   toggleSidebar: () => void;
   toggleBottomPanel: () => void;
+  toggleInspector: () => void;
 }
 
 export const useStore = create<EngineState>()(
@@ -766,8 +768,10 @@ export const useStore = create<EngineState>()(
         }),
       sidebarVisible: true,
       bottomPanelVisible: true,
+      inspectorVisible: true,
       toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
       toggleBottomPanel: () => set((state) => ({ bottomPanelVisible: !state.bottomPanelVisible })),
+      toggleInspector: () => set((state) => ({ inspectorVisible: !state.inspectorVisible })),
     }),
     {
       partialize: (state) => ({ objects: state.objects, environment: state.environment }),

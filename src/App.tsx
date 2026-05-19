@@ -14,6 +14,7 @@ export default function App() {
   const activeScriptId = useStore((s) => s.activeScriptId);
   const sidebarVisible = useStore((s) => s.sidebarVisible);
   const bottomPanelVisible = useStore((s) => s.bottomPanelVisible);
+  const inspectorVisible = useStore((s) => s.inspectorVisible);
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -36,13 +37,29 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Determine static Tailwind grid layout classes based on visibility permutations
+  let gridColsClass = '';
+  let bottomSpanClass = '';
+
+  if (sidebarVisible && inspectorVisible) {
+    gridColsClass = 'lg:grid-cols-[240px_1fr_300px]';
+    bottomSpanClass = 'lg:col-span-3';
+  } else if (!sidebarVisible && inspectorVisible) {
+    gridColsClass = 'lg:grid-cols-[1fr_300px]';
+    bottomSpanClass = 'lg:col-span-2';
+  } else if (sidebarVisible && !inspectorVisible) {
+    gridColsClass = 'lg:grid-cols-[240px_1fr]';
+    bottomSpanClass = 'lg:col-span-2';
+  } else {
+    gridColsClass = 'lg:grid-cols-[1fr]';
+    bottomSpanClass = 'lg:col-span-1';
+  }
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-bg-deep text-text-primary font-sans">
       <TopBar />
 
-      <main className={`flex-1 grid grid-cols-1 gap-px bg-border overflow-hidden transition-all duration-300 ${
-        sidebarVisible ? 'lg:grid-cols-[240px_1fr_300px]' : 'lg:grid-cols-[1fr_300px]'
-      } ${
+      <main className={`flex-1 grid grid-cols-1 gap-px bg-border overflow-hidden transition-all duration-300 ${gridColsClass} ${
         bottomPanelVisible ? 'grid-rows-[1fr_200px]' : 'grid-rows-[1fr_0px]'
       }`}>
         {/* Left Panel - Outliner */}
@@ -70,15 +87,15 @@ export default function App() {
         </section>
 
         {/* Right Panel - Inspector */}
-        <section className="bg-bg-surface flex flex-col overflow-hidden hidden lg:flex">
-          <InspectorPanel />
-        </section>
+        {inspectorVisible && (
+          <section className="bg-bg-surface flex flex-col overflow-hidden hidden lg:flex">
+            <InspectorPanel />
+          </section>
+        )}
 
         {/* Bottom Panel - Content/Console */}
         {bottomPanelVisible && (
-          <section className={`bg-bg-surface col-span-1 flex flex-col overflow-hidden ${
-            sidebarVisible ? 'lg:col-span-3' : 'lg:col-span-2'
-          }`}>
+          <section className={`bg-bg-surface col-span-1 flex flex-col overflow-hidden ${bottomSpanClass}`}>
             <BottomPanel />
           </section>
         )}

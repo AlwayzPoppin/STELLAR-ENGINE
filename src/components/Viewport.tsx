@@ -1159,7 +1159,7 @@ function ExportHelper() {
 }
 
 export default function Viewport() {
-  const { objects, selectedIds, selectObject, environment, addObject, isPlaying, showGrid, sidebarVisible, bottomPanelVisible, toggleSidebar, toggleBottomPanel } = useStore();
+  const { objects, selectedIds, selectObject, environment, addObject, isPlaying, showGrid, sidebarVisible, bottomPanelVisible, inspectorVisible, toggleSidebar, toggleBottomPanel, toggleInspector } = useStore();
   const showOverlays = useStore((state) => state.showOverlays);
   const showPhysicsDebug = useStore((state) => state.showPhysicsDebug);
 
@@ -1445,25 +1445,45 @@ export default function Viewport() {
         </div>
       </div>
 
-      {/* LEFT SIDEBAR GHOST TOGGLE */}
+      {/* REOPEN LEFT SIDEBAR */}
       {!sidebarVisible && (
         <button
           onClick={toggleSidebar}
-          className="absolute left-0 top-1/2 -translate-y-1/2 p-1 bg-neutral-900/80 border border-neutral-700/50 rounded-r-md text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 transition-all z-50 cursor-pointer shadow-lg"
+          className="absolute left-0 top-1/2 -translate-y-1/2 z-50 group flex items-center cursor-pointer"
           title="Open Sidebar"
         >
-          <ChevronRight size={16} />
+          <div className="h-20 w-1 bg-sky-500/20 group-hover:bg-sky-500/60 rounded-r-full transition-all" />
+          <div className="p-1.5 bg-neutral-900 border border-l-0 border-neutral-800 rounded-r-lg text-neutral-400 group-hover:text-white shadow-xl -ml-px flex items-center justify-center">
+            <ChevronRight size={14} />
+          </div>
         </button>
       )}
 
-      {/* BOTTOM PANEL GHOST TOGGLE */}
+      {/* REOPEN RIGHT INSPECTOR */}
+      {!inspectorVisible && (
+        <button
+          onClick={toggleInspector}
+          className="absolute right-0 top-1/2 -translate-y-1/2 z-50 group flex flex-row-reverse items-center cursor-pointer"
+          title="Open Inspector"
+        >
+          <div className="h-20 w-1 bg-sky-500/20 group-hover:bg-sky-500/60 rounded-l-full transition-all" />
+          <div className="p-1.5 bg-neutral-900 border border-r-0 border-neutral-800 rounded-l-lg text-neutral-400 group-hover:text-white shadow-xl -mr-px flex items-center justify-center">
+            <ChevronLeft size={14} />
+          </div>
+        </button>
+      )}
+
+      {/* REOPEN BOTTOM PANEL */}
       {!bottomPanelVisible && (
         <button
           onClick={toggleBottomPanel}
-          className="absolute bottom-0 left-1/2 -translate-x-1/2 p-1 bg-neutral-900/80 border border-neutral-700/50 rounded-t-md text-neutral-400 hover:text-amber-400 hover:bg-neutral-800 transition-all z-50 cursor-pointer shadow-lg"
+          className="absolute bottom-0 left-1/2 -translate-x-1/2 z-50 group flex flex-col-reverse items-center cursor-pointer"
           title="Open Bottom Panel"
         >
-          <ChevronUp size={16} />
+          <div className="w-20 h-1 bg-sky-500/20 group-hover:bg-sky-500/60 rounded-t-full transition-all" />
+          <div className="p-1 bg-neutral-900 border border-b-0 border-neutral-800 rounded-t-lg text-neutral-400 group-hover:text-white shadow-xl -mb-px flex items-center justify-center">
+            <ChevronUp size={14} />
+          </div>
         </button>
       )}
     </div>
