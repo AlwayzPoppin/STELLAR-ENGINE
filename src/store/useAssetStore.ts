@@ -24,6 +24,11 @@ export const useAssetStore = create<AssetStore>((set) => ({
     { id: '2', name: 'PlayerModel', type: 'model' },
     { id: '3', name: 'Level_01', type: 'scene' },
     { id: '4', name: 'HDRI_Skybox', type: 'image' },
+    { id: 'fire_pit', name: 'Fire Pit', type: 'model', url: '/Meshy_AI_fire_pit.glb' },
+    { id: 'long_grass', name: 'Long Grass', type: 'model', url: '/Meshy_AI_long_grass_0519031509_texture.glb' },
+    { id: 'short_grass', name: 'Short Grass', type: 'model', url: '/Meshy_AI_short_grass_0519031623_texture.glb' },
+    { id: 'rocky_mountain', name: 'Rocky Mountain', type: 'model', url: '/rocky+mountain+3d+model.glb' },
+    { id: 'stylized_tree', name: 'Stylized Tree', type: 'model', url: '/stylized+tree+3d+model.glb' },
     { id: '5', name: 'BehaviorScript.js', type: 'script', content: `// BehaviorScript.js
 // Runs every frame while PLAY mode is active.
 // 'self' is the live THREE.Object3D — mutate it directly!
