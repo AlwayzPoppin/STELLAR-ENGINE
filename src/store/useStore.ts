@@ -195,6 +195,10 @@ interface EngineState {
   copiedProperties: Partial<SceneObject> | null;
   copyProperties: (obj: SceneObject) => void;
   pasteProperties: (targetId: string) => void;
+  sidebarVisible: boolean;
+  bottomPanelVisible: boolean;
+  toggleSidebar: () => void;
+  toggleBottomPanel: () => void;
 }
 
 export const useStore = create<EngineState>()(
@@ -760,6 +764,10 @@ export const useStore = create<EngineState>()(
             ),
           };
         }),
+      sidebarVisible: true,
+      bottomPanelVisible: true,
+      toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
+      toggleBottomPanel: () => set((state) => ({ bottomPanelVisible: !state.bottomPanelVisible })),
     }),
     {
       partialize: (state) => ({ objects: state.objects, environment: state.environment }),

@@ -21,7 +21,7 @@ import { EffectComposer, Bloom, ToneMapping, Vignette, Outline, Selection, Selec
 import { useStore, SceneObject, FoliageInstanceData } from '../store/useStore';
 import { useAssetStore } from '../store/useAssetStore';
 import * as THREE from 'three';
-import { Layers } from 'lucide-react';
+import { Layers, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { BlendFunction, KernelSize } from 'postprocessing';
 
 
@@ -1159,7 +1159,7 @@ function ExportHelper() {
 }
 
 export default function Viewport() {
-  const { objects, selectedIds, selectObject, environment, addObject, isPlaying, showGrid } = useStore();
+  const { objects, selectedIds, selectObject, environment, addObject, isPlaying, showGrid, sidebarVisible, bottomPanelVisible, toggleSidebar, toggleBottomPanel } = useStore();
   const showOverlays = useStore((state) => state.showOverlays);
   const showPhysicsDebug = useStore((state) => state.showPhysicsDebug);
 
@@ -1444,6 +1444,32 @@ export default function Viewport() {
           </div>
         </div>
       </div>
+
+      {/* Left Sidebar Collapse/Expand Toggle Button */}
+      <button
+        onClick={toggleSidebar}
+        className={`absolute top-[48%] -translate-y-1/2 left-0 z-40 w-4 h-14 bg-bg-panel/85 hover:bg-bg-panel border-y border-r border-border hover:text-amber-400 rounded-r-md flex items-center justify-center transition-all cursor-pointer shadow-[0_4px_12px_rgba(0,0,0,0.5)] group`}
+        title={sidebarVisible ? "Collapse Left Panel" : "Expand Left Panel"}
+      >
+        {sidebarVisible ? (
+          <ChevronLeft size={12} className="group-hover:scale-110 transition-transform" />
+        ) : (
+          <ChevronRight size={12} className="group-hover:scale-110 transition-transform text-amber-400" />
+        )}
+      </button>
+
+      {/* Bottom Panel Collapse/Expand Toggle Button */}
+      <button
+        onClick={toggleBottomPanel}
+        className={`absolute bottom-0 left-[50%] -translate-x-1/2 z-40 w-14 h-4 bg-bg-panel/85 hover:bg-bg-panel border-x border-t border-border hover:text-amber-400 rounded-t-md flex items-center justify-center transition-all cursor-pointer shadow-[0_-4px_12px_rgba(0,0,0,0.5)] group`}
+        title={bottomPanelVisible ? "Collapse Bottom Panel" : "Expand Bottom Panel"}
+      >
+        {bottomPanelVisible ? (
+          <ChevronDown size={12} className="group-hover:scale-110 transition-transform" />
+        ) : (
+          <ChevronUp size={12} className="group-hover:scale-110 transition-transform text-amber-400" />
+        )}
+      </button>
     </div>
   );
 }

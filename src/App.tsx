@@ -12,6 +12,8 @@ import RightToolbar from './components/RightToolbar';
 
 export default function App() {
   const activeScriptId = useStore((s) => s.activeScriptId);
+  const sidebarVisible = useStore((s) => s.sidebarVisible);
+  const bottomPanelVisible = useStore((s) => s.bottomPanelVisible);
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -38,11 +40,17 @@ export default function App() {
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-bg-deep text-text-primary font-sans">
       <TopBar />
 
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-[240px_1fr_300px] grid-rows-[1fr_200px] gap-px bg-border overflow-hidden">
+      <main className={`flex-1 grid grid-cols-1 gap-px bg-border overflow-hidden transition-all duration-300 ${
+        sidebarVisible ? 'lg:grid-cols-[240px_1fr_300px]' : 'lg:grid-cols-[0px_1fr_300px]'
+      } ${
+        bottomPanelVisible ? 'grid-rows-[1fr_200px]' : 'grid-rows-[1fr_0px]'
+      }`}>
         {/* Left Panel - Outliner */}
-        <section className="bg-bg-surface flex flex-col overflow-hidden hidden lg:flex">
-          <HierarchyPanel />
-        </section>
+        {sidebarVisible && (
+          <section className="bg-bg-surface flex flex-col overflow-hidden hidden lg:flex">
+            <HierarchyPanel />
+          </section>
+        )}
 
         {/* Center - Document Host (Viewport + Script Editor) */}
         <section className="flex flex-col overflow-hidden bg-[#111116]">
@@ -67,9 +75,11 @@ export default function App() {
         </section>
 
         {/* Bottom Panel - Content/Console */}
-        <section className="bg-bg-surface col-span-1 lg:col-span-3 flex flex-col overflow-hidden">
-          <BottomPanel />
-        </section>
+        {bottomPanelVisible && (
+          <section className="bg-bg-surface col-span-1 lg:col-span-3 flex flex-col overflow-hidden">
+            <BottomPanel />
+          </section>
+        )}
       </main>
 
       <ContextMenu />
