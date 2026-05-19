@@ -368,6 +368,22 @@ export default function PreviewPanel() {
                     return null;
                   })}
 
+                  {/* Visual Selected Parent Indicator (glowing cyan line to parent bone) */}
+                  {(() => {
+                    if (!selectedJointId) return null;
+                    const activeJoint = animatedJoints.find((j) => j.id === selectedJointId);
+                    if (!activeJoint || !activeJoint.parentId) return null;
+                    const parentJoint = animatedJoints.find((j) => j.id === activeJoint.parentId);
+                    if (!parentJoint) return null;
+                    return (
+                      <Line
+                        points={[activeJoint.position, parentJoint.position]}
+                        color="#22d3ee" // Bright glowing Cyan!
+                        lineWidth={3.0}
+                      />
+                    );
+                  })()}
+
                   {/* Interactive rigging joint spheres */}
                   {animatedJoints.map((joint) => (
                     <RiggingJoint

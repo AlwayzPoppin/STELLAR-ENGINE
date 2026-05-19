@@ -159,8 +159,39 @@ export default function InspectorPanel() {
               </div>
             ) : (
               <div className="space-y-2.5 max-h-[50vh] overflow-y-auto pr-0.5 custom-scrollbar">
+                {/* Drag-to-Root Drop Target */}
+                <div
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const draggedId = e.dataTransfer.getData('text/plain');
+                    if (draggedId) {
+                      updateJoint(selectedObj.id, draggedId, { parentId: null });
+                    }
+                  }}
+                  className="border border-dashed border-neutral-800/80 hover:border-amber-500/40 bg-neutral-950/40 hover:bg-amber-500/5 rounded-lg py-2 text-center text-[9px] text-neutral-500 hover:text-amber-400 font-medium transition-all cursor-pointer font-mono"
+                >
+                  📥 DROP BONE HERE TO MAKE ROOT
+                </div>
+
                 {joints.map((joint, idx) => (
-                  <div key={joint.id} className="bg-neutral-900/40 border border-neutral-800/80 rounded-lg p-2.5 space-y-2.5 text-[11px] hover:border-amber-500/25 transition-all">
+                  <div
+                    key={joint.id}
+                    draggable="true"
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('text/plain', joint.id);
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const draggedId = e.dataTransfer.getData('text/plain');
+                      if (draggedId && draggedId !== joint.id) {
+                        // Prevent cyclical parenting
+                        updateJoint(selectedObj.id, draggedId, { parentId: joint.id });
+                      }
+                    }}
+                    className="bg-neutral-900/40 border border-neutral-800/80 rounded-lg p-2.5 space-y-2.5 text-[11px] hover:border-amber-500/25 transition-all cursor-grab active:cursor-grabbing"
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <input
                         type="text"
@@ -274,26 +305,15 @@ export default function InspectorPanel() {
                       </div>
                     </div>
 
-                    {/* Parent Dropdown */}
+                    {/* Parent Display Label */}
                     <div className="space-y-1">
-                      <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-wider block">Parent Joint</span>
-                      <select
-                        value={joint.parentId || ''}
-                        onChange={(e) => {
-                          const val = e.target.value === '' ? null : e.target.value;
-                          updateJoint(selectedObj.id, joint.id, { parentId: val });
-                        }}
-                        className="bg-neutral-950 border border-neutral-800 rounded px-1.5 py-1 text-text-primary text-[10px] w-full outline-none focus:border-amber-500/50 cursor-pointer"
-                      >
-                        <option value="">None (Root Bone)</option>
-                        {joints
-                          .filter((j) => j.id !== joint.id)
-                          .map((j) => (
-                            <option key={j.id} value={j.id}>
-                              {j.name}
-                            </option>
-                          ))}
-                      </select>
+                      <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-wider block">Parent Binding</span>
+                      <div className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-neutral-400 text-[10px] font-mono flex items-center justify-between">
+                        <span>
+                          {joint.parentId ? (joints.find(j => j.id === joint.parentId)?.name || 'Unknown') : 'None (Root)'}
+                        </span>
+                        <span className="text-[8px] text-neutral-600 font-bold">DRAG BONE HERE TO LINK</span>
+                      </div>
                     </div>
                   </div>
                 ))}
