@@ -37,6 +37,7 @@ import {
   Zap,
   Brush,
   Clapperboard,
+  Bone,
 } from 'lucide-react';
 import { useStore as useZustandStore } from 'zustand';
 import { useStore } from '../store/useStore';
@@ -437,6 +438,19 @@ function TopBar() {
                   <div className="flex items-center gap-2.5">
                     <Brush size={14} className={activeTool === 'animation_path' ? 'text-amber-400' : 'text-neutral-400'} />
                     <span>Path Painter (Draw Spline)</span>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTool(activeTool === 'skeleton_rig' ? 'select' : 'skeleton_rig');
+                    setIsAnimationMenuOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors text-left cursor-pointer ${activeTool === 'skeleton_rig' ? 'bg-amber-500/10 text-amber-400 font-semibold' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <Bone size={14} className={activeTool === 'skeleton_rig' ? 'text-amber-400' : 'text-neutral-400'} />
+                    <span>Skeleton Rigger (Add Bones)</span>
                   </div>
                 </button>
 

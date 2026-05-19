@@ -65,7 +65,16 @@ export type SceneObject = {
     spread?: number;
   };
   animationPath?: [number, number, number][];
+  joints?: JointData[];
 };
+
+export interface JointData {
+  id: string;
+  name: string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  parentId: string | null;
+}
 
 export type EnvironmentSettings = {
   ambientIntensity: number;
@@ -107,8 +116,8 @@ export interface FoliageInstanceData {
 }
 
 interface EngineState {
-  activeTool: 'select' | 'foliage' | 'animation_path';
-  setActiveTool: (tool: 'select' | 'foliage' | 'animation_path') => void;
+  activeTool: 'select' | 'foliage' | 'animation_path' | 'skeleton_rig';
+  setActiveTool: (tool: 'select' | 'foliage' | 'animation_path' | 'skeleton_rig') => void;
   foliageBrushAssetId: string | null;
   setFoliageBrushAssetId: (id: string | null) => void;
   foliageInstances: FoliageInstanceData[];
@@ -144,6 +153,9 @@ interface EngineState {
   stopPlay: () => void;
   selectObject: (id: string | null, multi?: boolean) => void;
   updateObject: (id: string, updates: Partial<SceneObject>) => void;
+  addJoint: (objectId: string, joint: JointData) => void;
+  updateJoint: (objectId: string, jointId: string, updates: Partial<JointData>) => void;
+  deleteJoint: (objectId: string, jointId: string) => void;
   addObject: (obj: SceneObject) => void;
   deleteObject: (id: string) => void;
   duplicateObject: (id: string) => void;
@@ -364,6 +376,38 @@ export const useStore = create<EngineState>()(
       updateObject: (id, updates) =>
         set((state) => ({
           objects: state.objects.map((obj) => (obj.id === id ? { ...obj, ...updates } : obj)),
+        })),
+      addJoint: (objectId, joint) =>
+        set((state) => ({
+          objects: state.objects.map((obj) =>
+            obj.id === objectId
+              ? { ...obj, joints: [...(obj.joints || []), joint] }
+              : obj
+          ),
+        })),
+      updateJoint: (objectId, jointId, updates) =>
+        set((state) => ({
+          objects: state.objects.map((obj) =>
+            obj.id === objectId
+              ? {
+                  ...obj,
+                  joints: (obj.joints || []).map((j) =>
+                    j.id === jointId ? { ...j, ...updates } : j
+                  ),
+                }
+              : obj
+          ),
+        })),
+      deleteJoint: (objectId, jointId) =>
+        set((state) => ({
+          objects: state.objects.map((obj) =>
+            obj.id === objectId
+              ? {
+                  ...obj,
+                  joints: (obj.joints || []).filter((j) => j.id !== jointId),
+                }
+              : obj
+          ),
         })),
       addObject: (obj) => set((state) => ({ objects: [...state.objects, obj] })),
       deleteObject: (id) =>

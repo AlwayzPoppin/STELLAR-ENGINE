@@ -721,6 +721,10 @@ const SceneNode = React.memo(function SceneNode({
         )}
       </>
 
+      {(activeTool === 'skeleton_rig' || showOverlays) && obj.joints && (
+        <SkeletalVisualizer joints={obj.joints} />
+      )}
+
       {children.map((child) => (
         <SceneNode
           key={child.id}
@@ -795,7 +799,7 @@ const SceneNode = React.memo(function SceneNode({
         groupContent
       )}
 
-      {isSelected && !isPlaying && activeTool !== 'foliage' && (
+      {isSelected && !isPlaying && activeTool !== 'foliage' && activeTool !== 'skeleton_rig' && (
         <TransformControls
           object={ref}
           mode={transformMode}
@@ -3368,6 +3372,89 @@ function FoliagePainterController() {
     </mesh>
   );
 }
+
+// ==========================================
+// SKELETAL RIGGER VISUALIZERS
+// ==========================================
+
+const ConnectionLine = React.memo(function ConnectionLine({ start, end }: { start: THREE.Vector3; end: THREE.Vector3 }) {
+  const points = useMemo(() => [start, end], [start, end]);
+  const lineGeometry = useMemo(() => {
+    const geom = new THREE.BufferGeometry().setFromPoints(points);
+    return geom;
+  }, [points]);
+
+  return (
+    <line geometry={lineGeometry}>
+      <lineBasicMaterial color="#f59e0b" linewidth={3} depthTest={false} transparent opacity={0.85} />
+    </line>
+  );
+});
+
+const SkeletalVisualizer = React.memo(function SkeletalVisualizer({ joints }: { joints?: any[] }) {
+  if (!joints || joints.length === 0) return null;
+
+  const absolutePositions = useMemo(() => {
+    const absolute: Record<string, THREE.Vector3> = {};
+    
+    const resolve = (joint: any): THREE.Vector3 => {
+      if (absolute[joint.id]) return absolute[joint.id];
+      
+      const pos = new THREE.Vector3(...joint.position);
+      if (joint.parentId) {
+        const parent = joints.find(j => j.id === joint.parentId);
+        if (parent) {
+          const parentPos = resolve(parent);
+          // Convert euler degree values to radians
+          const euler = new THREE.Euler(
+            (parent.rotation[0] * Math.PI) / 180,
+            (parent.rotation[1] * Math.PI) / 180,
+            (parent.rotation[2] * Math.PI) / 180
+          );
+          pos.applyEuler(euler);
+          pos.add(parentPos);
+        }
+      }
+      absolute[joint.id] = pos;
+      return pos;
+    };
+    
+    joints.forEach(j => resolve(j));
+    return absolute;
+  }, [joints]);
+
+  return (
+    <group>
+      {joints.map((joint) => {
+        const absPos = absolutePositions[joint.id] || new THREE.Vector3();
+        const parentJoint = joint.parentId ? joints.find(j => j.id === joint.parentId) : null;
+        const parentAbsPos = parentJoint ? (absolutePositions[parentJoint.id] || new THREE.Vector3()) : null;
+
+        return (
+          <group key={joint.id}>
+            {/* Glowing joint node sphere */}
+            <mesh position={absPos}>
+              <sphereGeometry args={[0.045, 16, 16]} />
+              <meshBasicMaterial color="#f59e0b" depthTest={false} transparent opacity={0.9} />
+            </mesh>
+
+            {/* Subtle orbital pointer ring */}
+            <mesh position={absPos} rotation={[Math.PI / 2, 0, 0]}>
+              <ringGeometry args={[0.07, 0.08, 32]} />
+              <meshBasicMaterial color="#fbbf24" depthTest={false} transparent opacity={0.4} />
+            </mesh>
+
+            {/* Bone link to parent */}
+            {parentAbsPos && (
+              <ConnectionLine start={parentAbsPos} end={absPos} />
+            )}
+          </group>
+        );
+      })}
+    </group>
+  );
+});
+
 
 
 
