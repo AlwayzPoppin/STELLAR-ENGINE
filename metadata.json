@@ -1,0 +1,6 @@
+{
+  "name": "Stellar Engine",
+  "description": "A high-performance web-based 3D scene editor featuring real-time path tracing, PBR materials, constructive solid geometry (CSG), real-time physics simulation, and robust asset management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
