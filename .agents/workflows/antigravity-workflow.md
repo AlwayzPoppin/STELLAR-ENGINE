@@ -5,7 +5,9 @@ description:
 # 🌌 **Stellar Engine — Antigravity Workflow (AAA 3D Engine Edition)**  
 ### *Optimized for: minimal errors, stable builds, cinematic visual testing, and high‑fidelity 3D behavior*
 
---- do not edit known good systema d stellar reference code unless i have verified for myself.
+--- 
+
+**#0) do not edit known good systema d stellar reference code unless i have verified for myself.
 
 ## **1) Clarify the Task Before Writing Code**
 This is where AAA engines prevent catastrophic regressions.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Folder, FileCode2, TerminalSquare, Image as ImageIcon, Box, Search, Upload, X, Clapperboard, Play, Pause, RotateCcw, Bone } from 'lucide-react';
+import { Folder, FileCode2, TerminalSquare, Image as ImageIcon, Box, Search, Upload, X, Clapperboard, Play, Pause, RotateCcw, Bone, ChevronDown } from 'lucide-react';
 import { useAssetStore } from '../store/useAssetStore';
 import { useStore } from '../store/useStore';
 
