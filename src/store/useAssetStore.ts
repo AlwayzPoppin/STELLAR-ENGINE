@@ -31,6 +31,16 @@ export const useAssetStore = create<AssetStore>((set) => ({
     { id: 'stylized_tree', name: 'Stylized Tree', type: 'model', url: '/stylized+tree+3d+model.glb' },
     { id: 'dirt_ground', name: 'Dirt Ground', type: 'model', url: '/Meshy_AI_dirt_ground_0519042354_texture.glb' },
     { id: 'dirt_ground_2', name: 'Dirt Ground 2', type: 'model', url: '/Meshy_AI_dirt_ground_2_0519045015_texture.glb' },
+    { id: 'brick_wall', name: 'Brick Wall', type: 'model', url: '/brick+wall+3d+model.glb' },
+    { id: 'door', name: 'Door', type: 'model', url: '/door+3d+model.glb' },
+    { id: 'humanoid_robot', name: 'Humanoid Robot', type: 'model', url: '/humanoid+robot+3d+model.glb' },
+    { id: 'pine_tree', name: 'Pine Tree', type: 'model', url: '/pine+tree+3d+model.glb' },
+    { id: 'stone_block_wall', name: 'Stone Block Wall', type: 'model', url: '/stone+block+wall+3d+model.glb' },
+    { id: 'stone_wall', name: 'Stone Wall', type: 'model', url: '/stone+wall+3d+model.glb' },
+    { id: 'wood_log', name: 'Wood Log', type: 'model', url: '/wood+log+3d+model.glb' },
+    { id: 'wood_log_2', name: 'Wood Log 2', type: 'model', url: '/wood+log+2.glb' },
+    { id: 'wooden_block', name: 'Wooden Block', type: 'model', url: '/wooden+block+3d+model.glb' },
+    { id: 'wooden_wall_1', name: 'Wooden Wall 1', type: 'model', url: '/wooden+wall+1.glb' },
     { id: '5', name: 'BehaviorScript.js', type: 'script', content: `// BehaviorScript.js
 // Runs every frame while PLAY mode is active.
 // 'self' is the live THREE.Object3D — mutate it directly!

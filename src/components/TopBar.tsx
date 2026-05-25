@@ -338,7 +338,7 @@ function TopBar() {
           )}
         </div>
 
-        {/* RECONFIGURED: Effects Tab Dropdown — Spawning Particle FX Emitters */}
+        {/* RECONFIGURED: Effects Tab Dropdown â€” Spawning Particle FX Emitters */}
         <div className="relative">
           <button
             onClick={() => { setIsEffectsMenuOpen(!isEffectsMenuOpen); setIsInsertMenuOpen(false); }}
@@ -430,19 +430,6 @@ function TopBar() {
                 
                 <button
                   onClick={() => {
-                    setActiveTool(activeTool === 'animation_path' ? 'select' : 'animation_path');
-                    setIsAnimationMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors text-left cursor-pointer ${activeTool === 'animation_path' ? 'bg-amber-500/10 text-amber-400 font-semibold' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Brush size={14} className={activeTool === 'animation_path' ? 'text-amber-400' : 'text-neutral-400'} />
-                    <span>Path Painter (Draw Spline)</span>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => {
                     setActiveTool(activeTool === 'skeleton_rig' ? 'select' : 'skeleton_rig');
                     setIsAnimationMenuOpen(false);
                   }}
@@ -456,22 +443,15 @@ function TopBar() {
 
                 <button
                   onClick={() => {
+                    setActiveTool(activeTool === 'animations' ? 'select' : 'animations');
                     setIsAnimationMenuOpen(false);
                   }}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-neutral-300 hover:bg-neutral-900 hover:text-white transition-colors text-left cursor-pointer"
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors text-left cursor-pointer ${activeTool === 'animations' ? 'bg-amber-500/10 text-amber-400 font-semibold' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}
                 >
-                  <Play size={14} className="text-neutral-400" />
-                  <span>Play Animation Path</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setIsAnimationMenuOpen(false);
-                  }}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-neutral-300 hover:bg-neutral-900 hover:text-white transition-colors text-left cursor-pointer"
-                >
-                  <Trash2 size={14} className="text-neutral-400" />
-                  <span>Clear Selected Path</span>
+                  <div className="flex items-center gap-2.5">
+                    <Clapperboard size={14} className={activeTool === 'animations' ? 'text-amber-400' : 'text-neutral-400'} />
+                    <span>Animation Timeline</span>
+                  </div>
                 </button>
               </div>
             </>

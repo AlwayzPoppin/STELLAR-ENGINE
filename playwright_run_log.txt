@@ -1,0 +1,41 @@
+Starting playwright script...
+Navigating to page...
+[BROWSER CONSOLE debug]: [vite] connecting...
+[BROWSER CONSOLE debug]: [vite] connected.
+[BROWSER CONSOLE info]: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+Navigation done. Waiting 3 seconds...
+[BROWSER CONSOLE log]: [AnimationExtractor] extractAnimationClips called for url: "/human_animations.glb"
+[BROWSER CONSOLE log]: [AnimationExtractor] Treating "/human_animations.glb" as GLB. Starting GLTFLoader...
+[BROWSER CONSOLE log]: [AnimationExtractor] extractAnimationClips called for url: "/human_animations.glb"
+[BROWSER CONSOLE log]: [AnimationExtractor] Treating "/human_animations.glb" as GLB. Starting GLTFLoader...
+[BROWSER CONSOLE warning]: THREE.Clock: This module has been deprecated. Please use THREE.Timer instead.
+[BROWSER CONSOLE warning]: [.WebGL-0x4dd4001bee00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 2097152 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 2097152 / 8637376
+[BROWSER CONSOLE warning]: [.WebGL-0x4dd4001bee00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 4063232 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 4063232 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 4194304 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 4194304 / 8637376
+[BROWSER CONSOLE warning]: [.WebGL-0x4dd4001bee00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 6291456 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 6291456 / 8637376
+[BROWSER CONSOLE warning]: using deprecated parameters for the initialization function; pass a single object instead
+[BROWSER CONSOLE warning]: [.WebGL-0x4dd4001bee00]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 8388608 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 8388608 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 8637376 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] Progress for "/human_animations.glb": 8637376 / 8637376
+[BROWSER CONSOLE log]: [AnimationExtractor] GLTFLoader success callback for "/human_animations.glb"
+[BROWSER CONSOLE log]: [AnimationExtractor] Found rawClips count: 124
+[BROWSER CONSOLE log]: [AnimationExtractor] Successfully extracted 124 clips for "/human_animations.glb"
+[BROWSER CONSOLE log]: [AnimationExtractor] GLTFLoader success callback for "/human_animations.glb"
+[BROWSER CONSOLE log]: [AnimationExtractor] Found rawClips count: 124
+[BROWSER CONSOLE log]: [AnimationExtractor] Successfully extracted 124 clips for "/human_animations.glb"
+Landing page screenshot saved.
+Looking for Test Player in hierarchy...
+Found 1 Test Player spans
+Clicking Test Player span...
+Looking for Skeleton Rig button...
+Found 0 Skeleton/Rig buttons
+Browser closed.

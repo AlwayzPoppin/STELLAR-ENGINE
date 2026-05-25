@@ -17,6 +17,13 @@ import {
   Trash2,
   Bone,
   Plus,
+  Dna,
+  RotateCcw,
+  Sliders,
+  Flame,
+  Play,
+  Pause,
+  Activity,
 } from 'lucide-react';
 import { ScrubbableInput } from './ScrubbableInput';
 
@@ -70,12 +77,28 @@ export default function InspectorPanel() {
     updateJoint,
     deleteJoint,
     toggleInspector,
+    selectedJointId,
+    setSelectedJointId,
+    symmetryEnabled,
+    toggleSymmetry,
+    antiSymmetryEnabled,
+    toggleAntiSymmetry,
   } = useStore();
+
+  const [heatmapActive, setHeatmapActive] = useState<boolean>(true);
+  const [loopActive, setLoopActive] = useState<boolean>(false);
+  const [activeCycle, setActiveCycle] = useState<string>('athletic_walk');
+  const [loopSpeed, setLoopSpeed] = useState<number>(100);
 
   const { assets } = useAssetStore();
   const models = assets.filter(a => a.type === 'model' && a.url);
+  const foliageModels = models.filter((m) =>
+    ['grass', 'tree', 'rock', 'stone', 'dirt', 'log', 'bush', 'plant', 'flower'].some((k) =>
+      m.name.toLowerCase().includes(k)
+    )
+  );
 
-  if (activeTool === 'skeleton_rig') {
+  if (activeTool === 'skeleton_rig' || activeTool === 'animations') {
     const selectedId = selectedIds[0] || null;
     const selectedObj = objects.find((o) => o.id === selectedId);
 
@@ -84,24 +107,24 @@ export default function InspectorPanel() {
         <div
           role="region"
           aria-label="Skeleton Rigger Panel"
-          className="w-80 bg-bg-surface/80 border-l border-border flex flex-col pointer-events-auto backdrop-blur-md overflow-y-auto select-none"
+          className="w-80 bg-neutral-950 border-l border-neutral-900 flex flex-col pointer-events-auto select-none"
         >
-          <div className="px-3 py-2.5 bg-transparent text-xs font-semibold text-text-primary border-b border-border flex justify-between items-center tracking-wide shrink-0">
+          <div className="px-3.5 py-3 border-b border-neutral-900 flex justify-between items-center tracking-wide shrink-0 bg-neutral-950/80">
             <div className="flex items-center gap-2">
-              <Bone size={14} className="text-amber-400 animate-pulse" />
-              <span>Skeleton Rigger Settings</span>
+              <Dna size={14} className="text-sky-400 animate-pulse" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-300">Rigging & Joint Hierarchy</span>
             </div>
             <button
               onClick={() => setActiveTool('select')}
-              className="text-[10px] text-text-secondary hover:text-text-primary bg-bg-deep border border-border px-1.5 py-0.5 rounded cursor-pointer animate-fade-in"
+              className="text-[10px] font-semibold text-neutral-400 hover:text-white bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded transition-all cursor-pointer"
             >
-              Exit
+              EXIT
             </button>
           </div>
-          <div className="p-6 text-center text-text-secondary text-sm flex-1 flex flex-col items-center justify-center gap-2">
-            <Bone className="opacity-25 text-amber-400" size={36} />
-            <span className="font-semibold text-text-primary text-xs">No Model Selected</span>
-            <p className="text-[11px] text-text-secondary/70 leading-relaxed max-w-[200px]">
+          <div className="p-6 text-center text-neutral-500 text-sm flex-1 flex flex-col items-center justify-center gap-3">
+            <Dna className="opacity-20 text-sky-400" size={36} />
+            <span className="font-bold text-neutral-300 text-xs uppercase tracking-widest">No Model Selected</span>
+            <p className="text-[10px] text-neutral-500 leading-relaxed max-w-[200px]">
               Select an object in the viewport or Hierarchy tab to start rigging joints.
             </p>
           </div>
@@ -111,30 +134,82 @@ export default function InspectorPanel() {
 
     const joints = selectedObj.joints || [];
 
+    // Recursive tree builder flat list
+    const getHierarchyList = () => {
+      const list: Array<{ joint: typeof joints[0]; depth: number }> = [];
+      const visited = new Set<string>();
+
+      const traverse = (jointId: string | null, currentDepth: number) => {
+        const children = joints.filter((j) => j.parentId === jointId);
+        children.forEach((child) => {
+          if (!visited.has(child.id)) {
+            visited.add(child.id);
+            list.push({ joint: child, depth: currentDepth });
+            traverse(child.id, currentDepth + 1);
+          }
+        });
+      };
+
+      const rootJoints = joints.filter((j) => !j.parentId || !joints.some((other) => other.id === j.parentId));
+      rootJoints.forEach((root) => {
+        if (!visited.has(root.id)) {
+          visited.add(root.id);
+          list.push({ joint: root, depth: 0 });
+          traverse(root.id, 1);
+        }
+      });
+
+      joints.forEach((j) => {
+        if (!visited.has(j.id)) {
+          visited.add(j.id);
+          list.push({ joint: j, depth: 0 });
+        }
+      });
+
+      return list;
+    };
+
+    const getJointIcon = (name: string) => {
+      const n = name.toLowerCase();
+      if (n.includes('waist') || n.includes('pelvis') || n.includes('hips')) return '🦴';
+      if (n.includes('spine') || n.includes('chest') || n.includes('torso')) return '🦴';
+      if (n.includes('arm') || n.includes('hand') || n.includes('forearm') || n.includes('shoulder')) return '💪';
+      if (n.includes('leg') || n.includes('foot') || n.includes('thigh') || n.includes('calf') || n.includes('toe')) return '🦵';
+      if (n.includes('head') || n.includes('neck')) return '💀';
+      return '🦴';
+    };
+
+    const hierarchyList = getHierarchyList();
+    const selectedJoint = joints.find((j) => j.id === selectedJointId);
+
+    // Degree conversion calculations
+    const radToDeg = (rad: number) => Math.round(rad * (180 / Math.PI)) || 0;
+    const degToRad = (deg: number) => deg * (Math.PI / 180);
+
     return (
       <div
         role="region"
         aria-label="Skeleton Rigger Panel"
-        className="w-80 bg-bg-surface/80 border-l border-border flex flex-col pointer-events-auto backdrop-blur-md overflow-y-auto select-none"
+        className="w-80 bg-[#111113] border-l border-neutral-900 flex flex-col pointer-events-auto select-none"
       >
-        <div className="px-3 py-2.5 bg-transparent text-xs font-semibold text-text-primary border-b border-border flex justify-between items-center tracking-wide shrink-0">
-          <div className="flex items-center gap-2 max-w-[180px] truncate">
-            <Bone size={14} className="text-amber-400 shrink-0" />
-            <span className="truncate">Rig: {selectedObj.name}</span>
+        {/* tech tag header */}
+        <div className="px-4 pt-3 flex flex-col shrink-0 pb-3 border-b border-neutral-900/50">
+          <span className="text-[7.5px] font-bold text-sky-500 font-mono tracking-widest uppercase">SKELETON_05</span>
+          <div className="flex items-center justify-between mt-0.5">
+            <div className="flex items-center gap-1.5">
+              <Dna size={15} className="text-sky-400" />
+              <span className="text-xs font-black tracking-wider text-white uppercase font-sans">Rigging & Joint Hierarchy</span>
+            </div>
           </div>
-          <button
-            onClick={() => setActiveTool('select')}
-            className="text-[10px] text-text-secondary hover:text-text-primary bg-bg-deep border border-border px-1.5 py-0.5 rounded cursor-pointer"
-          >
-            Exit
-          </button>
         </div>
 
-        <div className="p-3.5 flex flex-col gap-3.5 overflow-y-auto flex-1 custom-scrollbar">
-          {/* Skeleton Actions card */}
-          <div className="bg-bg-panel/30 border border-border rounded-lg p-3 space-y-3">
-            <div className="flex justify-between items-center text-xs font-bold text-text-primary">
-              <span className="font-mono tracking-tight text-neutral-400">Skeleton Hierarchy</span>
+        <div className="p-3.5 flex flex-col gap-4 overflow-y-auto flex-1 custom-scrollbar">
+          {/* SKELETAL BONES container */}
+          <div className="flex flex-col bg-[#141416] border border-neutral-900 rounded-xl p-3 gap-3">
+            <div className="flex justify-between items-center text-xs font-bold text-neutral-400 uppercase tracking-wider">
+              <div className="flex items-center gap-1 text-[10px] font-mono tracking-wide">
+                <span>🦴</span> SKELETAL BONES
+              </div>
               <button
                 onClick={() => {
                   const scaleOffset = 0.35 / (selectedObj.scale[1] || 1);
@@ -146,20 +221,21 @@ export default function InspectorPanel() {
                     rotation: [0, 0, 0],
                     parentId: joints.length > 0 ? joints[joints.length - 1].id : null,
                   });
+                  setSelectedJointId(newJointId);
                 }}
-                className="px-2 py-1 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 rounded text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                className="px-2.5 py-1 bg-transparent hover:bg-sky-500/10 border border-sky-500/40 text-sky-400 rounded-md text-[8.5px] font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
               >
-                <Plus size={10} /> Add Bone
+                + CUSTOM BONE
               </button>
             </div>
 
             {joints.length === 0 ? (
-              <div className="text-[10px] text-text-secondary/70 text-center py-4 leading-relaxed font-medium">
-                No bones rigged. Click "Add Bone" to create your root joint!
+              <div className="text-[10px] text-neutral-600 text-center py-4 leading-relaxed font-semibold">
+                No bones rigged. Click "+ CUSTOM BONE" to create your root joint!
               </div>
             ) : (
-              <div className="space-y-2.5 max-h-[50vh] overflow-y-auto pr-0.5 custom-scrollbar">
-                {/* Drag-to-Root Drop Target */}
+              <div className="flex flex-col gap-2 max-h-[35vh] overflow-y-auto pr-0.5 custom-scrollbar">
+                {/* Drag-to-Root Target */}
                 <div
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
@@ -169,176 +245,345 @@ export default function InspectorPanel() {
                       updateJoint(selectedObj.id, draggedId, { parentId: null });
                     }
                   }}
-                  className="border border-dashed border-neutral-800/80 hover:border-amber-500/40 bg-neutral-950/40 hover:bg-amber-500/5 rounded-lg py-2 text-center text-[9px] text-neutral-500 hover:text-amber-400 font-medium transition-all cursor-pointer font-mono"
+                  className="border border-dashed border-neutral-800 hover:border-sky-500/40 bg-neutral-950/40 hover:bg-sky-500/5 rounded-lg py-2 text-center text-[8px] text-neutral-500 hover:text-sky-400 font-bold tracking-widest transition-all cursor-pointer font-mono"
                 >
                   📥 DROP BONE HERE TO MAKE ROOT
                 </div>
 
-                {joints.map((joint, idx) => (
-                  <div
-                    key={joint.id}
-                    draggable="true"
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData('text/plain', joint.id);
-                    }}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const draggedId = e.dataTransfer.getData('text/plain');
-                      if (draggedId && draggedId !== joint.id) {
-                        // Prevent cyclical parenting
-                        updateJoint(selectedObj.id, draggedId, { parentId: joint.id });
-                      }
-                    }}
-                    className="bg-neutral-900/40 border border-neutral-800/80 rounded-lg p-2.5 space-y-2.5 text-[11px] hover:border-amber-500/25 transition-all cursor-grab active:cursor-grabbing"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <input
-                        type="text"
-                        value={joint.name}
-                        onChange={(e) => updateJoint(selectedObj.id, joint.id, { name: e.target.value })}
-                        className="bg-neutral-950 border border-neutral-800 rounded px-1.5 py-0.5 text-text-primary text-[10px] font-semibold w-28 outline-none focus:border-amber-500/50"
-                      />
+                {hierarchyList.map(({ joint, depth }) => {
+                  const isSelected = selectedJointId === joint.id;
+                  const primaryAngle = Math.round(
+                    Math.max(
+                      Math.abs(joint.rotation?.[0] || 0),
+                      Math.abs(joint.rotation?.[1] || 0),
+                      Math.abs(joint.rotation?.[2] || 0)
+                    )
+                  );
+                  const isRoot = !joint.parentId || joint.name.toLowerCase().includes('waist');
+                  return (
+                    <div
+                      key={joint.id}
+                      draggable="true"
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('text/plain', joint.id);
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const draggedId = e.dataTransfer.getData('text/plain');
+                        if (draggedId && draggedId !== joint.id) {
+                          updateJoint(selectedObj.id, draggedId, { parentId: joint.id });
+                        }
+                      }}
+                      onClick={() => setSelectedJointId(joint.id)}
+                      className={`flex items-center justify-between border rounded-xl p-2.5 transition-all duration-150 cursor-pointer ${
+                        isSelected
+                          ? 'border-sky-500 bg-[#091b2c]/80 text-sky-400 font-semibold shadow-[0_0_15px_rgba(14,165,233,0.12)]'
+                          : 'border-neutral-900/80 bg-[#161619] text-white hover:border-neutral-700 hover:bg-[#1a1a1f]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {depth > 0 && (
+                          <span className="text-neutral-500 font-bold select-none mr-0.5 font-mono text-[10px]">
+                            └──
+                          </span>
+                        )}
+                        <span className="text-[11px] shrink-0 select-none mr-0.5">{getJointIcon(joint.name)}</span>
+                        <div className="flex flex-col min-w-0">
+                          <input
+                            type="text"
+                            value={joint.name}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => updateJoint(selectedObj.id, joint.id, { name: e.target.value })}
+                            className={`bg-transparent border-none text-[11px] font-extrabold w-28 outline-none focus:text-white ${isSelected ? 'text-sky-400' : 'text-white'}`}
+                          />
+                          {isRoot && (
+                            <span className="text-[7.5px] text-neutral-500 font-mono tracking-widest mt-0.5 select-none font-bold">
+                              SYS_ROOT
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-[8px] font-bold text-amber-400 bg-amber-500/10 px-1 py-0.5 rounded font-mono border border-amber-500/20">
-                          BONE #{idx + 1}
+                        <span className={`text-[8.5px] font-mono font-bold bg-[#111113] border px-1.5 py-0.5 rounded select-none ${isSelected ? 'border-sky-500/40 text-sky-400' : 'border-neutral-800 text-neutral-400'}`}>
+                          {primaryAngle}°
                         </span>
                         <button
-                          onClick={() => deleteJoint(selectedObj.id, joint.id)}
-                          className="text-text-secondary hover:text-red-400 transition-colors p-0.5 cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteJoint(selectedObj.id, joint.id);
+                            if (isSelected) setSelectedJointId(null);
+                          }}
+                          className="text-neutral-500 hover:text-red-400 transition-colors p-0.5 cursor-pointer"
                           title="Delete Joint"
                         >
                           <Trash2 size={11} />
                         </button>
                       </div>
                     </div>
-
-                    {/* Local Offset values */}
-                    <div className="space-y-1">
-                      <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-wider block">Local Offset</span>
-                      <div className="grid grid-cols-3 gap-1">
-                        <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded px-1.5 py-0.5">
-                          <span className="text-[8px] font-bold text-red-500 mr-1 select-none font-mono">X</span>
-                          <input
-                            type="number"
-                            step="0.05"
-                            value={joint.position[0]}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              updateJoint(selectedObj.id, joint.id, { position: [val, joint.position[1], joint.position[2]] });
-                            }}
-                            className="bg-transparent border-none text-text-primary text-[10px] w-full text-center outline-none"
-                          />
-                        </div>
-                        <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded px-1.5 py-0.5">
-                          <span className="text-[8px] font-bold text-green-500 mr-1 select-none font-mono">Y</span>
-                          <input
-                            type="number"
-                            step="0.05"
-                            value={joint.position[1]}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              updateJoint(selectedObj.id, joint.id, { position: [joint.position[0], val, joint.position[2]] });
-                            }}
-                            className="bg-transparent border-none text-text-primary text-[10px] w-full text-center outline-none"
-                          />
-                        </div>
-                        <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded px-1.5 py-0.5">
-                          <span className="text-[8px] font-bold text-blue-500 mr-1 select-none font-mono">Z</span>
-                          <input
-                            type="number"
-                            step="0.05"
-                            value={joint.position[2]}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              updateJoint(selectedObj.id, joint.id, { position: [joint.position[0], joint.position[1], val] });
-                            }}
-                            className="bg-transparent border-none text-text-primary text-[10px] w-full text-center outline-none"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Local Euler Rotation */}
-                    <div className="space-y-1">
-                      <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-wider block">Rotation (Euler)</span>
-                      <div className="grid grid-cols-3 gap-1">
-                        <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded px-1.5 py-0.5">
-                          <span className="text-[8px] font-bold text-red-500 mr-1 select-none font-mono">X</span>
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={joint.rotation[0]}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              updateJoint(selectedObj.id, joint.id, { rotation: [val, joint.rotation[1], joint.rotation[2]] });
-                            }}
-                            className="bg-transparent border-none text-text-primary text-[10px] w-full text-center outline-none"
-                          />
-                        </div>
-                        <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded px-1.5 py-0.5">
-                          <span className="text-[8px] font-bold text-green-500 mr-1 select-none font-mono">Y</span>
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={joint.rotation[1]}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              updateJoint(selectedObj.id, joint.id, { rotation: [joint.rotation[0], val, joint.rotation[2]] });
-                            }}
-                            className="bg-transparent border-none text-text-primary text-[10px] w-full text-center outline-none"
-                          />
-                        </div>
-                        <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded px-1.5 py-0.5">
-                          <span className="text-[8px] font-bold text-blue-500 mr-1 select-none font-mono">Z</span>
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={joint.rotation[2]}
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value) || 0;
-                              updateJoint(selectedObj.id, joint.id, { rotation: [joint.rotation[0], joint.rotation[1], val] });
-                            }}
-                            className="bg-transparent border-none text-text-primary text-[10px] w-full text-center outline-none"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Parent Display Label */}
-                    <div className="space-y-1">
-                      <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-wider block">Parent Binding</span>
-                      <div className="bg-neutral-950 border border-neutral-800 rounded px-2 py-1 text-neutral-400 text-[10px] font-mono flex items-center justify-between">
-                        <span>
-                          {joint.parentId ? (joints.find(j => j.id === joint.parentId)?.name || 'Unknown') : 'None (Root)'}
-                        </span>
-                        <span className="text-[8px] text-neutral-600 font-bold">DRAG BONE HERE TO LINK</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
+          </div>
+
+          {/* SELECTED BONE ROTATOR */}
+          {selectedJoint && (
+            <div className="flex flex-col bg-[#141416] border border-neutral-900 rounded-xl p-3.5 gap-3.5">
+              <div className="flex justify-between items-center text-xs font-bold text-neutral-400 uppercase tracking-wider">
+                <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                  <span>🦴</span> SELECTED BONE ROTATOR
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={toggleSymmetry}
+                    className={`px-2 py-0.5 border rounded text-[8px] font-bold uppercase cursor-pointer transition-colors ${
+                      symmetryEnabled 
+                        ? 'bg-sky-500/20 text-sky-400 border-sky-500/50' 
+                        : 'bg-transparent text-neutral-500 border-neutral-800 hover:text-white'
+                    }`}
+                    title="Standard Mirror (e.g., T-Pose)"
+                  >
+                    Mirror
+                  </button>
+                  <button
+                    onClick={toggleAntiSymmetry}
+                    disabled={!symmetryEnabled}
+                    className={`px-2 py-0.5 border rounded text-[8px] font-bold uppercase cursor-pointer transition-colors ${
+                      !symmetryEnabled ? 'opacity-30 cursor-not-allowed border-neutral-850 text-neutral-600' :
+                      antiSymmetryEnabled 
+                        ? 'bg-amber-500/20 text-amber-400 border-amber-500/50' 
+                        : 'bg-transparent text-neutral-500 border-neutral-800 hover:text-white'
+                    }`}
+                    title="Walk Cycle Mode (Invert Pitch)"
+                  >
+                    Anti-Mirror
+                  </button>
+                  <button
+                    onClick={() => {
+                      updateJoint(selectedObj.id, selectedJoint.id, { rotation: [0, 0, 0] });
+                    }}
+                    className="px-2 py-0.5 bg-transparent hover:bg-neutral-850 border border-neutral-800 text-neutral-400 hover:text-white rounded text-[8px] font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
+                    title="Reset rotations to rest pose"
+                  >
+                    <RotateCcw size={8} /> Rest
+                  </button>
+                </div>
+              </div>
+
+              {/* Joint card inside Rotator */}
+              <div className="flex items-center justify-between bg-[#1b1b1e] border border-neutral-900 rounded-lg p-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] select-none">{getJointIcon(selectedJoint.name)}</span>
+                  <span className="text-[11px] font-extrabold text-white truncate max-w-[130px]">{selectedJoint.name}</span>
+                </div>
+                <span className="text-[10px] font-bold text-sky-400 font-mono bg-[#091b2c] border border-sky-500/20 px-1.5 py-0.5 rounded">
+                  {Math.round(
+                    (selectedJoint.rotation?.[0] || 0) ||
+                    (selectedJoint.rotation?.[1] || 0) ||
+                    (selectedJoint.rotation?.[2] || 0)
+                  )}°
+                </span>
+              </div>
+
+              {/* Euler Sliders */}
+              <div className="space-y-3">
+                {/* Rot X */}
+                <div className="flex flex-col gap-1 w-full">
+                  <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500">
+                    <span className="font-bold text-red-500/90">ROTATION X (PITCH)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">-180°</span>
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      step="1"
+                      value={Math.round(selectedJoint.rotation?.[0] || 0)}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        updateJoint(selectedObj.id, selectedJoint.id, {
+                          rotation: [val, selectedJoint.rotation?.[1] || 0, selectedJoint.rotation?.[2] || 0]
+                        });
+                      }}
+                      className="w-full accent-sky-500 h-1 bg-neutral-950 rounded appearance-none cursor-pointer"
+                    />
+                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">+180°</span>
+                  </div>
+                </div>
+
+                {/* Rot Y */}
+                <div className="flex flex-col gap-1 w-full">
+                  <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500">
+                    <span className="font-bold text-green-500/90">ROTATION Y (YAW)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">-180°</span>
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      step="1"
+                      value={Math.round(selectedJoint.rotation?.[1] || 0)}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        updateJoint(selectedObj.id, selectedJoint.id, {
+                          rotation: [selectedJoint.rotation?.[0] || 0, val, selectedJoint.rotation?.[2] || 0]
+                        });
+                      }}
+                      className="w-full accent-sky-500 h-1 bg-neutral-950 rounded appearance-none cursor-pointer"
+                    />
+                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">+180°</span>
+                  </div>
+                </div>
+
+                {/* Rot Z */}
+                <div className="flex flex-col gap-1 w-full">
+                  <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500">
+                    <span className="font-bold text-blue-500/90">ROTATION Z (ROLL)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">-180°</span>
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      step="1"
+                      value={Math.round(selectedJoint.rotation?.[2] || 0)}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        updateJoint(selectedObj.id, selectedJoint.id, {
+                          rotation: [selectedJoint.rotation?.[0] || 0, selectedJoint.rotation?.[1] || 0, val]
+                        });
+                      }}
+                      className="w-full accent-sky-500 h-1 bg-neutral-950 rounded appearance-none cursor-pointer"
+                    />
+                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">+180°</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-px bg-neutral-900/60 my-1" />
+
+              {/* EDIT JOINT PIVOT POINT */}
+              <div className="text-[10px] font-extrabold text-sky-400 tracking-wider flex items-center gap-1 select-none font-mono">
+                <span>🔧</span> EDIT JOINT PIVOT POINT
+              </div>
+
+              {/* Pivot Height (Y) raise/lower slider */}
+              <div className="flex flex-col gap-1.5 w-full">
+                <div className="flex items-center justify-between text-[10px] font-bold text-neutral-400">
+                  <span>Pivot Height (Y)</span>
+                  <span className="font-extrabold text-white">{selectedJoint.position[1].toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="-2.0"
+                  max="2.0"
+                  step="0.01"
+                  value={selectedJoint.position[1]}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    updateJoint(selectedObj.id, selectedJoint.id, { position: [selectedJoint.position[0], val, selectedJoint.position[2]] });
+                  }}
+                  className="w-full accent-sky-500 h-1.5 bg-neutral-950 rounded appearance-none cursor-pointer"
+                />
+              </div>
+
+              <div className="h-px bg-neutral-900/60 my-1" />
+
+              {/* Coordinates display */}
+              <div className="text-[8.5px] font-mono text-neutral-500 select-none uppercase tracking-wide">
+                PIVOT: X:{selectedJoint.position[0].toFixed(1)} Y:{selectedJoint.position[1].toFixed(1)} Z:{selectedJoint.position[2].toFixed(1)}
+              </div>
+            </div>
+          )}
+
+          {/* WEIGHT PAINT HEATMAP */}
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => setHeatmapActive(!heatmapActive)}
+              className={`w-full py-2 border rounded-xl text-[10px] font-extrabold uppercase tracking-widest flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all duration-300 active:scale-[0.98] ${
+                heatmapActive
+                  ? 'bg-rose-600 hover:bg-rose-500 border-rose-500 text-white animate-pulse'
+                  : 'bg-neutral-900/60 hover:bg-neutral-850 border-neutral-800 text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              <span>🔥</span> {heatmapActive ? 'Heatmap Overlay Active' : 'Activate Heatmap Overlay'}
+            </button>
+          </div>
+
+          {/* SKELETAL CYCLES */}
+          <div className="flex flex-col bg-[#141416] border border-neutral-900 rounded-xl p-3.5 gap-3.5">
+            <div className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5 select-none font-mono">
+              <span>🎬</span> SKELETAL CYCLES
+            </div>
+
+            <button
+              onClick={() => setLoopActive(!loopActive)}
+              className={`w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-200 active:scale-[0.98] border ${
+                loopActive
+                  ? 'bg-[#153422] border-emerald-500 text-emerald-400'
+                  : 'bg-neutral-900 hover:bg-neutral-850 border-neutral-800 text-white'
+              }`}
+            >
+              {loopActive ? <Pause size={10} /> : <Play size={10} />}
+              <span>{loopActive ? 'PAUSE CYCLE LOOP' : 'ACTIVATE LOOP'}</span>
+            </button>
+
+            <div className="flex flex-col gap-1 w-full">
+              <span className="text-[8px] font-mono text-neutral-500 uppercase tracking-wider">PRESET CYCLE</span>
+              <div className="relative w-full">
+                <select
+                  className="bg-[#1b1b1e] border border-neutral-855 text-white pl-3.5 pr-8 py-2 rounded-lg w-full font-sans text-xs focus:border-sky-500/60 focus:outline-none transition-all cursor-pointer appearance-none uppercase font-extrabold tracking-wide"
+                  value={activeCycle}
+                  onChange={(e) => setActiveCycle(e.target.value)}
+                >
+                  <option value="athletic_walk">ATHLETIC WALK CYCLE</option>
+                  <option value="sneaky_ninja">SNEAKY NINJA RUN</option>
+                  <option value="dance_groove">DANCE GROOVE</option>
+                  <option value="t_pose">T-POSE STANDARD</option>
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-neutral-400">
+                  <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1 w-full">
+              <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500 uppercase">
+                <span>LOOP SPEED</span>
+                <span className="font-extrabold text-[#10b981]">{loopSpeed}%</span>
+              </div>
+              <input
+                type="range"
+                min="25"
+                max="200"
+                step="5"
+                value={loopSpeed}
+                onChange={(e) => setLoopSpeed(parseInt(e.target.value))}
+                className="w-full accent-[#10b981] h-1 bg-neutral-950 rounded appearance-none cursor-pointer"
+              />
+            </div>
           </div>
 
           {/* Clear Rig Button */}
           {joints.length > 0 && (
             <button
-              onClick={() => updateObject(selectedObj.id, { joints: [] })}
+              onClick={() => {
+                updateObject(selectedObj.id, { joints: [] });
+                setSelectedJointId(null);
+              }}
               className="w-full py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/20 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             >
               <Trash2 size={13} />
               <span>Clear Rig Hierarchy</span>
             </button>
           )}
-
-          {/* Quick tips */}
-          <div className="text-[10px] text-text-secondary/60 bg-bg-deep/30 border border-border/50 rounded-lg p-3 space-y-1">
-            <div className="font-semibold text-text-secondary">Rigger Quick Tips:</div>
-            <div>• Click <span className="font-semibold text-amber-400">Add Bone</span> to spawn interactive joint offsets.</div>
-            <div>• Connect joints hierarchically via the Parent selector.</div>
-            <div>• Real-time Euler inputs simulate forward kinematics poses in the viewport.</div>
-          </div>
         </div>
       </div>
     );
@@ -369,7 +614,7 @@ export default function InspectorPanel() {
             <div className="space-y-2 w-full">
               <span className="text-[11px] text-text-secondary block">Select Foliage Asset</span>
               <div className="grid grid-cols-2 gap-2">
-                {models.map((m) => {
+                {foliageModels.map((m) => {
                   const isSelected = foliageBrushAssetId === m.url;
                   return (
                     <button

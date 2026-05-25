@@ -6,7 +6,7 @@ export type SceneObject = {
   id: string;
   name: string;
   type: 'mesh' | 'light' | 'group' | 'gltf' | 'csg';
-  geometry?: 'box' | 'sphere' | 'plane' | 'cylinder' | 'cone' | 'wedge' | 'torus' | 'torusKnot' | 'ring' | 'tornado' | 'smoke' | 'water' | 'sparks' | 'fire';
+  geometry?: 'box' | 'sphere' | 'plane' | 'cylinder' | 'cone' | 'wedge' | 'torus' | 'torusKnot' | 'ring' | 'tornado' | 'smoke' | 'water' | 'sparks' | 'fire' | 'halfSphere' | 'star' | 'crescentMoon';
   url?: string;
   position: [number, number, number];
   rotation: [number, number, number];
@@ -66,6 +66,7 @@ export type SceneObject = {
   };
   animationPath?: [number, number, number][];
   joints?: JointData[];
+  paintedPhysics?: Record<number, string>;
 };
 
 export interface JointData {
@@ -74,6 +75,39 @@ export interface JointData {
   position: [number, number, number];
   rotation: [number, number, number];
   parentId: string | null;
+  ikEnabled?: boolean;
+  ikTarget?: [number, number, number] | null;
+}
+
+export function getMirrorJointName(name: string): string {
+  if (name.includes('Left')) return name.replace('Left', 'Right');
+  if (name.includes('Right')) return name.replace('Right', 'Left');
+  if (name.includes('left')) return name.replace('left', 'right');
+  if (name.includes('right')) return name.replace('right', 'left');
+  if (name.includes('_L_')) return name.replace('_L_', '_R_');
+  if (name.includes('_R_')) return name.replace('_R_', '_L_');
+  if (name.includes('_l_')) return name.replace('_l_', '_r_');
+  if (name.includes('_r_')) return name.replace('_r_', '_l_');
+  if (name.startsWith('L_')) return name.replace('L_', 'R_');
+  if (name.startsWith('R_')) return name.replace('R_', 'L_');
+  if (name.endsWith('_L')) return name.replace('_L', '_R');
+  if (name.endsWith('_R')) return name.replace('_R', '_L');
+  if (name.endsWith('_l')) return name.replace('_l', '_r');
+  if (name.endsWith('_r')) return name.replace('_r', '_l');
+  return name;
+}
+
+export function getMirrorAxis(joints: JointData[]): 'x' | 'z' {
+  if (!joints || joints.length === 0) return 'x';
+  let maxAbsX = 0;
+  let maxAbsZ = 0;
+  for (const j of joints) {
+    const x = Math.abs(j.position[0]);
+    const z = Math.abs(j.position[2]);
+    if (x > maxAbsX) maxAbsX = x;
+    if (z > maxAbsZ) maxAbsZ = z;
+  }
+  return maxAbsZ > maxAbsX ? 'z' : 'x';
 }
 
 export type EnvironmentSettings = {
@@ -116,8 +150,8 @@ export interface FoliageInstanceData {
 }
 
 interface EngineState {
-  activeTool: 'select' | 'foliage' | 'animation_path' | 'skeleton_rig';
-  setActiveTool: (tool: 'select' | 'foliage' | 'animation_path' | 'skeleton_rig') => void;
+  activeTool: 'select' | 'foliage' | 'animation_path' | 'skeleton_rig' | 'animations' | 'physics_brush' | 'cinematics_lab';
+  setActiveTool: (tool: 'select' | 'foliage' | 'animation_path' | 'skeleton_rig' | 'animations' | 'physics_brush' | 'cinematics_lab') => void;
   foliageBrushAssetId: string | null;
   setFoliageBrushAssetId: (id: string | null) => void;
   foliageInstances: FoliageInstanceData[];
@@ -154,7 +188,7 @@ interface EngineState {
   selectObject: (id: string | null, multi?: boolean) => void;
   updateObject: (id: string, updates: Partial<SceneObject>) => void;
   addJoint: (objectId: string, joint: JointData) => void;
-  updateJoint: (objectId: string, jointId: string, updates: Partial<JointData>) => void;
+  updateJoint: (objectId: string, jointId: string, updates: Partial<JointData>, skipSymmetry?: boolean) => void;
   deleteJoint: (objectId: string, jointId: string) => void;
   addObject: (obj: SceneObject) => void;
   deleteObject: (id: string) => void;
@@ -171,7 +205,15 @@ interface EngineState {
       | 'torusKnot'
       | 'ring'
       | 'light'
-      | 'group',
+      | 'group'
+      | 'halfSphere'
+      | 'star'
+      | 'crescentMoon'
+      | 'tornado'
+      | 'smoke'
+      | 'water'
+      | 'sparks'
+      | 'fire',
   ) => void;
   setParent: (childId: string, parentId: string | null) => void;
   clearScene: () => void;
@@ -204,6 +246,14 @@ interface EngineState {
   previewedAssetId: string | null;
   setPreviewedAsset: (id: string | null) => void;
   getPreviewObject: (id: string | null) => SceneObject | undefined;
+  selectedJointId: string | null;
+  setSelectedJointId: (id: string | null) => void;
+  symmetryEnabled: boolean;
+  toggleSymmetry: () => void;
+  antiSymmetryEnabled: boolean;
+  toggleAntiSymmetry: () => void;
+  panelWidth: number;
+  setPanelWidth: (w: number) => void;
 }
 
 export const useStore = create<EngineState>()(
@@ -313,11 +363,11 @@ export const useStore = create<EngineState>()(
         {
           id: 'obj_player',
           name: 'Test Player',
-          type: 'fbx',
-          url: '/HUMANOID_TEST_PLAYER/Meshy_AI_HUMANOID_TEST_PLAYER_0513183418_texture_fbx/Meshy_AI_HUMANOID_TEST_PLAYER_0513183418_texture.fbx',
+          type: 'gltf',
+          url: '/humanoid+robot+3d+model.glb',
           position: [-2, 1, 0],
           rotation: [0, 0, 0],
-          scale: [0.01, 0.01, 0.01],
+          scale: [1, 1, 1],
           physics: 'dynamic',
           physicsMass: 80,
           physicsCollisions: true,
@@ -403,19 +453,82 @@ export const useStore = create<EngineState>()(
               : obj
           ),
         })),
-      updateJoint: (objectId, jointId, updates) =>
-        set((state) => ({
-          objects: state.objects.map((obj) =>
-            obj.id === objectId
-              ? {
-                  ...obj,
-                  joints: (obj.joints || []).map((j) =>
-                    j.id === jointId ? { ...j, ...updates } : j
-                  ),
+      updateJoint: (objectId, jointId, updates, skipSymmetry = false) =>
+        set((state) => {
+          const obj = state.objects.find((o) => o.id === objectId);
+          if (!obj) return {};
+
+          const joints = obj.joints || [];
+          const selectedJoint = joints.find((j) => j.id === jointId);
+          if (!selectedJoint) return {};
+
+          let nextJoints = joints.map((j) =>
+            j.id === jointId ? { ...j, ...updates } : j
+          );
+
+          if (state.symmetryEnabled && !skipSymmetry) {
+            const cpName = getMirrorJointName(selectedJoint.name);
+            if (cpName !== selectedJoint.name) {
+              const counterpartJoint = joints.find((j) => j.name === cpName);
+              if (counterpartJoint) {
+                const mirrorAxis = getMirrorAxis(joints);
+                const cpUpdates: Partial<JointData> = {};
+
+                if (updates.position !== undefined) {
+                  const cpPos = [...updates.position] as [number, number, number];
+                  if (mirrorAxis === 'z') {
+                    cpPos[2] = -cpPos[2];
+                  } else {
+                    cpPos[0] = -cpPos[0];
+                  }
+                  cpUpdates.position = cpPos;
                 }
-              : obj
-          ),
-        })),
+
+                if (updates.rotation !== undefined) {
+                  const [rx, ry, rz] = updates.rotation;
+                  const isAnti = state.antiSymmetryEnabled;
+                  if (mirrorAxis === 'z') {
+                    // Character faces X (L/R legs separated along Z)
+                    // Pitch is Z, Roll is X.
+                    cpUpdates.rotation = [-rx, -ry, isAnti ? -rz : rz];
+                  } else {
+                    // Character faces Z (L/R legs separated along X)
+                    // Pitch is X, Roll is Z.
+                    cpUpdates.rotation = [isAnti ? -rx : rx, -ry, -rz];
+                  }
+                }
+
+                if (updates.ikTarget !== undefined) {
+                  if (updates.ikTarget === null) {
+                    cpUpdates.ikTarget = null;
+                  } else {
+                    const cpTarget = [...updates.ikTarget] as [number, number, number];
+                    if (mirrorAxis === 'z') {
+                      cpTarget[2] = -cpTarget[2];
+                    } else {
+                      cpTarget[0] = -cpTarget[0];
+                    }
+                    cpUpdates.ikTarget = cpTarget;
+                  }
+                }
+
+                if (updates.ikEnabled !== undefined) {
+                  cpUpdates.ikEnabled = updates.ikEnabled;
+                }
+
+                nextJoints = nextJoints.map((j) =>
+                  j.id === counterpartJoint.id ? { ...j, ...cpUpdates } : j
+                );
+              }
+            }
+          }
+
+          return {
+            objects: state.objects.map((o) =>
+              o.id === objectId ? { ...o, joints: nextJoints } : o
+            ),
+          };
+        }),
       deleteJoint: (objectId, jointId) =>
         set((state) => ({
           objects: state.objects.map((obj) =>
@@ -778,9 +891,22 @@ export const useStore = create<EngineState>()(
       previewedAssetId: null,
       setPreviewedAsset: (id) => set({ previewedAssetId: id }),
       getPreviewObject: (id) => get().objects.find((o) => o.id === id),
+      selectedJointId: null,
+      setSelectedJointId: (id) => set({ selectedJointId: id }),
+      symmetryEnabled: true,
+      toggleSymmetry: () => set((state) => ({ symmetryEnabled: !state.symmetryEnabled })),
+      antiSymmetryEnabled: false,
+      toggleAntiSymmetry: () => set((state) => ({ antiSymmetryEnabled: !state.antiSymmetryEnabled })),
+      panelWidth: 450,
+      setPanelWidth: (w) => set({ panelWidth: w }),
     }),
     {
       partialize: (state) => ({ objects: state.objects, environment: state.environment }),
     },
   ),
 );
+
+if (typeof window !== 'undefined') {
+  (window as any).useStore = useStore;
+}
+

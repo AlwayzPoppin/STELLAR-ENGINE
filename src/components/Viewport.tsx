@@ -488,7 +488,7 @@ function CustomMaterial({ material }: { material: SceneObject['material'] }) {
   );
 }
 
-export function renderGeometry(geometryType?: string) {
+function renderGeometry(geometryType?: string) {
   switch (geometryType) {
     case 'box':
       return <boxGeometry args={[1, 1, 1]} />;
@@ -588,7 +588,7 @@ const SceneNode = React.memo(function SceneNode({
 
   // FIX 1: Include anchored objects so floors/walls always enter the physics engine.
   const hasPhysics = (obj.physics && obj.physics !== 'none') || obj.anchored;
-  const isSimulating = isPlaying && hasPhysics;
+  const isSimulating = isPlaying && hasPhysics && activeTool !== 'skeleton_rig';
 
   useFrame((state, delta) => {
     if (!isPlaying || !ref.current) return;
@@ -767,7 +767,7 @@ const SceneNode = React.memo(function SceneNode({
         )}
       </>
 
-      {(activeTool === 'skeleton_rig' || showOverlays) && obj.joints && (
+      {activeTool === 'skeleton_rig' && obj.joints && (
         <SkeletalVisualizer joints={obj.joints} parentScale={obj.scale} />
       )}
 
@@ -801,9 +801,12 @@ const SceneNode = React.memo(function SceneNode({
   // FIX 2: Keep the RigidBody's rotation equal to the object's rotation so
   //         rotated planes (walls, ramps) have correctly-oriented colliders.
   // FIX 3: Safely omit mass when undefined so Rapier auto-computes it from the colliders.
+  const hasJoints = obj.joints && obj.joints.length > 0;
   const wrapperProps = isSimulating
     ? {
-        type: obj.anchored || obj.physics === 'fixed' ? 'fixed' : 'dynamic',
+        type: hasJoints
+          ? 'kinematicPosition'
+          : (obj.anchored || obj.physics === 'fixed' ? 'fixed' : 'dynamic'),
         position: obj.position,
         rotation: obj.rotation,
         colliders: getColliderProp(),
@@ -1186,6 +1189,7 @@ export default function Viewport() {
   const [isDragging, setIsDragging] = useState(false);
   const orbitRef = useRef<any>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const rootObjects = objects.filter((o) => !o.parentId);
 
@@ -1269,6 +1273,7 @@ export default function Viewport() {
 
   return (
     <div
+      ref={containerRef}
       className="w-full h-full relative"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -1285,6 +1290,40 @@ export default function Viewport() {
       <Canvas
         shadows={{ type: THREE.PCFShadowMap }}
         camera={{ position: [5, 5, 5], fov: 50 }}
+        onCreated={({ gl }) => {
+          // Patch WebGLRenderer's getContextAttributes
+          const originalRendererGetContextAttributes = gl.getContextAttributes.bind(gl);
+          gl.getContextAttributes = () => {
+            return originalRendererGetContextAttributes() || {
+              alpha: false,
+              depth: true,
+              stencil: false,
+              antialias: false,
+              premultipliedAlpha: true,
+              preserveDrawingBuffer: false,
+              failIfMajorPerformanceCaveat: false,
+              powerPreference: 'default',
+            };
+          };
+
+          // Patch WebGLRenderingContext's getContextAttributes to prevent postprocessing composer crashes on context loss
+          const ctx = gl.getContext();
+          if (ctx) {
+            const originalCtxGetContextAttributes = ctx.getContextAttributes.bind(ctx);
+            ctx.getContextAttributes = () => {
+              return originalCtxGetContextAttributes() || {
+                alpha: false,
+                depth: true,
+                stencil: false,
+                antialias: false,
+                premultipliedAlpha: true,
+                preserveDrawingBuffer: false,
+                failIfMajorPerformanceCaveat: false,
+                powerPreference: 'default',
+              };
+            };
+          }
+        }}
         onPointerMissed={() => selectObject(null)}
         onPointerDown={(e) => {
           if (e.button === 2) {
@@ -1309,7 +1348,7 @@ export default function Viewport() {
           useStore.getState().openContextMenu(e.nativeEvent.clientX, e.nativeEvent.clientY, 'viewport', null);
         }}
       >
-        <Stats />
+        <Stats parent={containerRef} className="!absolute !top-0 !left-0 !z-50" />
         {environment.fogEnabled && (
           <fogExp2 attach="fog" color={environment.fogColor} density={environment.fogDensity} />
         )}
@@ -3490,30 +3529,9 @@ const SkeletalVisualizer = React.memo(function SkeletalVisualizer({ joints, pare
 
   const absolutePositions = useMemo(() => {
     const absolute: Record<string, THREE.Vector3> = {};
-    
-    const resolve = (joint: any): THREE.Vector3 => {
-      if (absolute[joint.id]) return absolute[joint.id];
-      
-      const pos = new THREE.Vector3(...joint.position);
-      if (joint.parentId) {
-        const parent = joints.find(j => j.id === joint.parentId);
-        if (parent) {
-          const parentPos = resolve(parent);
-          // Convert euler degree values to radians
-          const euler = new THREE.Euler(
-            (parent.rotation[0] * Math.PI) / 180,
-            (parent.rotation[1] * Math.PI) / 180,
-            (parent.rotation[2] * Math.PI) / 180
-          );
-          pos.applyEuler(euler);
-          pos.add(parentPos);
-        }
-      }
-      absolute[joint.id] = pos;
-      return pos;
-    };
-    
-    joints.forEach(j => resolve(j));
+    joints.forEach(joint => {
+      absolute[joint.id] = new THREE.Vector3(...joint.position);
+    });
     return absolute;
   }, [joints]);
 

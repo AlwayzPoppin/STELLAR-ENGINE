@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^powershell -NoProfile -Command \"Get-Process -Name node -ErrorAction SilentlyContinue \\| Select-Object Id,ProcessName \\| ForEach-Object \\{ Stop-Process -Id \\$_\\.Id -Force -ErrorAction SilentlyContinue \\}; cd 'C:\\\\Users\\\\wattz\\\\stellar-engine'; npx vite --port=3001 --host=127\\.0\\.0\\.1\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
