@@ -1,5 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
+import { useAssetStore } from '../store/useAssetStore';
+import { toast } from '../store/useToastStore';
+import { createPortal } from 'react-dom';
 import {
   Trash2,
   Edit2,
@@ -87,9 +90,61 @@ export default function ContextMenu() {
     };
   }, [closeContextMenu, contextMenu]);
 
-  if (!contextMenu) return null;
+  const [showConfirmClear, setShowConfirmClear] = useState(false);
 
-  const { x, y, targetId, type } = contextMenu;
+  if (!contextMenu && !showConfirmClear) return null;
+
+  if (showConfirmClear) {
+    return createPortal(
+      <div 
+        onClick={() => {
+          setShowConfirmClear(false);
+          closeContextMenu();
+        }}
+        className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in"
+      >
+        <div 
+          onClick={(e) => e.stopPropagation()}
+          className="bg-bg-panel/85 border border-border/80 p-6 rounded-xl max-w-sm w-full mx-4 shadow-2xl backdrop-blur-md flex flex-col gap-4 text-left"
+        >
+          <div className="flex items-center gap-3 text-red-400">
+            <Trash2 size={20} className="shrink-0" />
+            <h3 className="text-[14px] font-semibold text-text-primary">Clear Scene?</h3>
+          </div>
+          <p className="text-[11px] text-text-secondary leading-relaxed">
+            Are you sure you want to clear the scene? This will delete all user objects, scripts, and environmental settings. This action cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2.5 mt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowConfirmClear(false);
+                closeContextMenu();
+              }}
+              className="px-3.5 py-1.5 rounded-[4px] border border-border bg-bg-deep text-text-secondary hover:text-text-primary text-[11px] font-medium transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                clearScene();
+                setShowConfirmClear(false);
+                closeContextMenu();
+                toast.success('Scene Cleared', 'All objects have been removed.');
+              }}
+              className="px-3.5 py-1.5 rounded-[4px] bg-red-500 hover:bg-red-600 text-white text-[11px] font-medium transition-colors shadow-lg shadow-red-500/20 cursor-pointer"
+            >
+              Clear Everything
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  }
+
+  const { x, y, targetId, type } = contextMenu!;
   const obj = objects.find((o) => o.id === targetId);
 
   const handleFocus = () => {
@@ -182,8 +237,7 @@ export default function ContextMenu() {
           </button>
           <button
             onClick={() => {
-              clearScene();
-              closeContextMenu();
+              setShowConfirmClear(true);
             }}
             className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 text-red-400 transition-colors"
           >

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useStore, EnvironmentSettings } from '../store/useStore';
 import { useAssetStore } from '../store/useAssetStore';
 import {
@@ -24,11 +25,27 @@ import {
   Play,
   Pause,
   Activity,
+  Search,
+  X,
+  Folder,
 } from 'lucide-react';
 import { ScrubbableInput } from './ScrubbableInput';
+import { AssetThumbnailPlaceholder } from './AssetCard';
 
 const Section = ({ title, icon: Icon, colorClass = 'text-text-secondary', defaultExpanded = true, children }: any) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
+
+  React.useEffect(() => {
+    const handleGlobalToggle = (e: Event) => {
+      const customEvent = e as CustomEvent<boolean>;
+      setExpanded(customEvent.detail);
+    };
+    window.addEventListener('stellar-inspector-expand-all', handleGlobalToggle);
+    return () => {
+      window.removeEventListener('stellar-inspector-expand-all', handleGlobalToggle);
+    };
+  }, []);
+
   return (
     <div className="bg-bg-panel/30 border border-border rounded-lg overflow-hidden shrink-0 backdrop-blur-sm">
       <div
@@ -72,23 +89,15 @@ export default function InspectorPanel() {
     foliageBrushDensity,
     setFoliageBrushDensity,
     clearFoliage,
-    foliageInstances,
-    addJoint,
-    updateJoint,
-    deleteJoint,
     toggleInspector,
-    selectedJointId,
-    setSelectedJointId,
-    symmetryEnabled,
-    toggleSymmetry,
-    antiSymmetryEnabled,
-    toggleAntiSymmetry,
+    isPickingAsset,
+    setIsPickingAsset,
+    activePickerTarget,
+    setActivePickerTarget,
   } = useStore();
 
-  const [heatmapActive, setHeatmapActive] = useState<boolean>(true);
-  const [loopActive, setLoopActive] = useState<boolean>(false);
-  const [activeCycle, setActiveCycle] = useState<string>('athletic_walk');
-  const [loopSpeed, setLoopSpeed] = useState<number>(100);
+  const [isReplacingMesh, setIsReplacingMesh] = useState(false);
+  const [meshSearch, setMeshSearch] = useState('');
 
   const { assets } = useAssetStore();
   const models = assets.filter(a => a.type === 'model' && a.url);
@@ -98,496 +107,7 @@ export default function InspectorPanel() {
     )
   );
 
-  if (activeTool === 'skeleton_rig' || activeTool === 'animations') {
-    const selectedId = selectedIds[0] || null;
-    const selectedObj = objects.find((o) => o.id === selectedId);
 
-    if (!selectedObj) {
-      return (
-        <div
-          role="region"
-          aria-label="Skeleton Rigger Panel"
-          className="w-80 bg-neutral-950 border-l border-neutral-900 flex flex-col pointer-events-auto select-none"
-        >
-          <div className="px-3.5 py-3 border-b border-neutral-900 flex justify-between items-center tracking-wide shrink-0 bg-neutral-950/80">
-            <div className="flex items-center gap-2">
-              <Dna size={14} className="text-sky-400 animate-pulse" />
-              <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-300">Rigging & Joint Hierarchy</span>
-            </div>
-            <button
-              onClick={() => setActiveTool('select')}
-              className="text-[10px] font-semibold text-neutral-400 hover:text-white bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded transition-all cursor-pointer"
-            >
-              EXIT
-            </button>
-          </div>
-          <div className="p-6 text-center text-neutral-500 text-sm flex-1 flex flex-col items-center justify-center gap-3">
-            <Dna className="opacity-20 text-sky-400" size={36} />
-            <span className="font-bold text-neutral-300 text-xs uppercase tracking-widest">No Model Selected</span>
-            <p className="text-[10px] text-neutral-500 leading-relaxed max-w-[200px]">
-              Select an object in the viewport or Hierarchy tab to start rigging joints.
-            </p>
-          </div>
-        </div>
-      );
-    }
-
-    const joints = selectedObj.joints || [];
-
-    // Recursive tree builder flat list
-    const getHierarchyList = () => {
-      const list: Array<{ joint: typeof joints[0]; depth: number }> = [];
-      const visited = new Set<string>();
-
-      const traverse = (jointId: string | null, currentDepth: number) => {
-        const children = joints.filter((j) => j.parentId === jointId);
-        children.forEach((child) => {
-          if (!visited.has(child.id)) {
-            visited.add(child.id);
-            list.push({ joint: child, depth: currentDepth });
-            traverse(child.id, currentDepth + 1);
-          }
-        });
-      };
-
-      const rootJoints = joints.filter((j) => !j.parentId || !joints.some((other) => other.id === j.parentId));
-      rootJoints.forEach((root) => {
-        if (!visited.has(root.id)) {
-          visited.add(root.id);
-          list.push({ joint: root, depth: 0 });
-          traverse(root.id, 1);
-        }
-      });
-
-      joints.forEach((j) => {
-        if (!visited.has(j.id)) {
-          visited.add(j.id);
-          list.push({ joint: j, depth: 0 });
-        }
-      });
-
-      return list;
-    };
-
-    const getJointIcon = (name: string) => {
-      const n = name.toLowerCase();
-      if (n.includes('waist') || n.includes('pelvis') || n.includes('hips')) return '🦴';
-      if (n.includes('spine') || n.includes('chest') || n.includes('torso')) return '🦴';
-      if (n.includes('arm') || n.includes('hand') || n.includes('forearm') || n.includes('shoulder')) return '💪';
-      if (n.includes('leg') || n.includes('foot') || n.includes('thigh') || n.includes('calf') || n.includes('toe')) return '🦵';
-      if (n.includes('head') || n.includes('neck')) return '💀';
-      return '🦴';
-    };
-
-    const hierarchyList = getHierarchyList();
-    const selectedJoint = joints.find((j) => j.id === selectedJointId);
-
-    // Degree conversion calculations
-    const radToDeg = (rad: number) => Math.round(rad * (180 / Math.PI)) || 0;
-    const degToRad = (deg: number) => deg * (Math.PI / 180);
-
-    return (
-      <div
-        role="region"
-        aria-label="Skeleton Rigger Panel"
-        className="w-80 bg-[#111113] border-l border-neutral-900 flex flex-col pointer-events-auto select-none"
-      >
-        {/* tech tag header */}
-        <div className="px-4 pt-3 flex flex-col shrink-0 pb-3 border-b border-neutral-900/50">
-          <span className="text-[7.5px] font-bold text-sky-500 font-mono tracking-widest uppercase">SKELETON_05</span>
-          <div className="flex items-center justify-between mt-0.5">
-            <div className="flex items-center gap-1.5">
-              <Dna size={15} className="text-sky-400" />
-              <span className="text-xs font-black tracking-wider text-white uppercase font-sans">Rigging & Joint Hierarchy</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-3.5 flex flex-col gap-4 overflow-y-auto flex-1 custom-scrollbar">
-          {/* SKELETAL BONES container */}
-          <div className="flex flex-col bg-[#141416] border border-neutral-900 rounded-xl p-3 gap-3">
-            <div className="flex justify-between items-center text-xs font-bold text-neutral-400 uppercase tracking-wider">
-              <div className="flex items-center gap-1 text-[10px] font-mono tracking-wide">
-                <span>🦴</span> SKELETAL BONES
-              </div>
-              <button
-                onClick={() => {
-                  const scaleOffset = 0.35 / (selectedObj.scale[1] || 1);
-                  const newJointId = `j_${crypto.randomUUID()}`;
-                  addJoint(selectedObj.id, {
-                    id: newJointId,
-                    name: `Joint_${joints.length + 1}`,
-                    position: [0, joints.length > 0 ? scaleOffset : 0, 0],
-                    rotation: [0, 0, 0],
-                    parentId: joints.length > 0 ? joints[joints.length - 1].id : null,
-                  });
-                  setSelectedJointId(newJointId);
-                }}
-                className="px-2.5 py-1 bg-transparent hover:bg-sky-500/10 border border-sky-500/40 text-sky-400 rounded-md text-[8.5px] font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
-              >
-                + CUSTOM BONE
-              </button>
-            </div>
-
-            {joints.length === 0 ? (
-              <div className="text-[10px] text-neutral-600 text-center py-4 leading-relaxed font-semibold">
-                No bones rigged. Click "+ CUSTOM BONE" to create your root joint!
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 max-h-[35vh] overflow-y-auto pr-0.5 custom-scrollbar">
-                {/* Drag-to-Root Target */}
-                <div
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const draggedId = e.dataTransfer.getData('text/plain');
-                    if (draggedId) {
-                      updateJoint(selectedObj.id, draggedId, { parentId: null });
-                    }
-                  }}
-                  className="border border-dashed border-neutral-800 hover:border-sky-500/40 bg-neutral-950/40 hover:bg-sky-500/5 rounded-lg py-2 text-center text-[8px] text-neutral-500 hover:text-sky-400 font-bold tracking-widest transition-all cursor-pointer font-mono"
-                >
-                  📥 DROP BONE HERE TO MAKE ROOT
-                </div>
-
-                {hierarchyList.map(({ joint, depth }) => {
-                  const isSelected = selectedJointId === joint.id;
-                  const primaryAngle = Math.round(
-                    Math.max(
-                      Math.abs(joint.rotation?.[0] || 0),
-                      Math.abs(joint.rotation?.[1] || 0),
-                      Math.abs(joint.rotation?.[2] || 0)
-                    )
-                  );
-                  const isRoot = !joint.parentId || joint.name.toLowerCase().includes('waist');
-                  return (
-                    <div
-                      key={joint.id}
-                      draggable="true"
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData('text/plain', joint.id);
-                      }}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const draggedId = e.dataTransfer.getData('text/plain');
-                        if (draggedId && draggedId !== joint.id) {
-                          updateJoint(selectedObj.id, draggedId, { parentId: joint.id });
-                        }
-                      }}
-                      onClick={() => setSelectedJointId(joint.id)}
-                      className={`flex items-center justify-between border rounded-xl p-2.5 transition-all duration-150 cursor-pointer ${
-                        isSelected
-                          ? 'border-sky-500 bg-[#091b2c]/80 text-sky-400 font-semibold shadow-[0_0_15px_rgba(14,165,233,0.12)]'
-                          : 'border-neutral-900/80 bg-[#161619] text-white hover:border-neutral-700 hover:bg-[#1a1a1f]'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        {depth > 0 && (
-                          <span className="text-neutral-500 font-bold select-none mr-0.5 font-mono text-[10px]">
-                            └──
-                          </span>
-                        )}
-                        <span className="text-[11px] shrink-0 select-none mr-0.5">{getJointIcon(joint.name)}</span>
-                        <div className="flex flex-col min-w-0">
-                          <input
-                            type="text"
-                            value={joint.name}
-                            onClick={(e) => e.stopPropagation()}
-                            onChange={(e) => updateJoint(selectedObj.id, joint.id, { name: e.target.value })}
-                            className={`bg-transparent border-none text-[11px] font-extrabold w-28 outline-none focus:text-white ${isSelected ? 'text-sky-400' : 'text-white'}`}
-                          />
-                          {isRoot && (
-                            <span className="text-[7.5px] text-neutral-500 font-mono tracking-widest mt-0.5 select-none font-bold">
-                              SYS_ROOT
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className={`text-[8.5px] font-mono font-bold bg-[#111113] border px-1.5 py-0.5 rounded select-none ${isSelected ? 'border-sky-500/40 text-sky-400' : 'border-neutral-800 text-neutral-400'}`}>
-                          {primaryAngle}°
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteJoint(selectedObj.id, joint.id);
-                            if (isSelected) setSelectedJointId(null);
-                          }}
-                          className="text-neutral-500 hover:text-red-400 transition-colors p-0.5 cursor-pointer"
-                          title="Delete Joint"
-                        >
-                          <Trash2 size={11} />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* SELECTED BONE ROTATOR */}
-          {selectedJoint && (
-            <div className="flex flex-col bg-[#141416] border border-neutral-900 rounded-xl p-3.5 gap-3.5">
-              <div className="flex justify-between items-center text-xs font-bold text-neutral-400 uppercase tracking-wider">
-                <div className="flex items-center gap-1.5 text-[10px] font-mono">
-                  <span>🦴</span> SELECTED BONE ROTATOR
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={toggleSymmetry}
-                    className={`px-2 py-0.5 border rounded text-[8px] font-bold uppercase cursor-pointer transition-colors ${
-                      symmetryEnabled 
-                        ? 'bg-sky-500/20 text-sky-400 border-sky-500/50' 
-                        : 'bg-transparent text-neutral-500 border-neutral-800 hover:text-white'
-                    }`}
-                    title="Standard Mirror (e.g., T-Pose)"
-                  >
-                    Mirror
-                  </button>
-                  <button
-                    onClick={toggleAntiSymmetry}
-                    disabled={!symmetryEnabled}
-                    className={`px-2 py-0.5 border rounded text-[8px] font-bold uppercase cursor-pointer transition-colors ${
-                      !symmetryEnabled ? 'opacity-30 cursor-not-allowed border-neutral-850 text-neutral-600' :
-                      antiSymmetryEnabled 
-                        ? 'bg-amber-500/20 text-amber-400 border-amber-500/50' 
-                        : 'bg-transparent text-neutral-500 border-neutral-800 hover:text-white'
-                    }`}
-                    title="Walk Cycle Mode (Invert Pitch)"
-                  >
-                    Anti-Mirror
-                  </button>
-                  <button
-                    onClick={() => {
-                      updateJoint(selectedObj.id, selectedJoint.id, { rotation: [0, 0, 0] });
-                    }}
-                    className="px-2 py-0.5 bg-transparent hover:bg-neutral-850 border border-neutral-800 text-neutral-400 hover:text-white rounded text-[8px] font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
-                    title="Reset rotations to rest pose"
-                  >
-                    <RotateCcw size={8} /> Rest
-                  </button>
-                </div>
-              </div>
-
-              {/* Joint card inside Rotator */}
-              <div className="flex items-center justify-between bg-[#1b1b1e] border border-neutral-900 rounded-lg p-2.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] select-none">{getJointIcon(selectedJoint.name)}</span>
-                  <span className="text-[11px] font-extrabold text-white truncate max-w-[130px]">{selectedJoint.name}</span>
-                </div>
-                <span className="text-[10px] font-bold text-sky-400 font-mono bg-[#091b2c] border border-sky-500/20 px-1.5 py-0.5 rounded">
-                  {Math.round(
-                    (selectedJoint.rotation?.[0] || 0) ||
-                    (selectedJoint.rotation?.[1] || 0) ||
-                    (selectedJoint.rotation?.[2] || 0)
-                  )}°
-                </span>
-              </div>
-
-              {/* Euler Sliders */}
-              <div className="space-y-3">
-                {/* Rot X */}
-                <div className="flex flex-col gap-1 w-full">
-                  <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500">
-                    <span className="font-bold text-red-500/90">ROTATION X (PITCH)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">-180°</span>
-                    <input
-                      type="range"
-                      min="-180"
-                      max="180"
-                      step="1"
-                      value={Math.round(selectedJoint.rotation?.[0] || 0)}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value);
-                        updateJoint(selectedObj.id, selectedJoint.id, {
-                          rotation: [val, selectedJoint.rotation?.[1] || 0, selectedJoint.rotation?.[2] || 0]
-                        });
-                      }}
-                      className="w-full accent-sky-500 h-1 bg-neutral-950 rounded appearance-none cursor-pointer"
-                    />
-                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">+180°</span>
-                  </div>
-                </div>
-
-                {/* Rot Y */}
-                <div className="flex flex-col gap-1 w-full">
-                  <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500">
-                    <span className="font-bold text-green-500/90">ROTATION Y (YAW)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">-180°</span>
-                    <input
-                      type="range"
-                      min="-180"
-                      max="180"
-                      step="1"
-                      value={Math.round(selectedJoint.rotation?.[1] || 0)}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value);
-                        updateJoint(selectedObj.id, selectedJoint.id, {
-                          rotation: [selectedJoint.rotation?.[0] || 0, val, selectedJoint.rotation?.[2] || 0]
-                        });
-                      }}
-                      className="w-full accent-sky-500 h-1 bg-neutral-950 rounded appearance-none cursor-pointer"
-                    />
-                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">+180°</span>
-                  </div>
-                </div>
-
-                {/* Rot Z */}
-                <div className="flex flex-col gap-1 w-full">
-                  <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500">
-                    <span className="font-bold text-blue-500/90">ROTATION Z (ROLL)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">-180°</span>
-                    <input
-                      type="range"
-                      min="-180"
-                      max="180"
-                      step="1"
-                      value={Math.round(selectedJoint.rotation?.[2] || 0)}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value);
-                        updateJoint(selectedObj.id, selectedJoint.id, {
-                          rotation: [selectedJoint.rotation?.[0] || 0, selectedJoint.rotation?.[1] || 0, val]
-                        });
-                      }}
-                      className="w-full accent-sky-500 h-1 bg-neutral-950 rounded appearance-none cursor-pointer"
-                    />
-                    <span className="text-[8.5px] font-mono text-neutral-600 font-bold">+180°</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="h-px bg-neutral-900/60 my-1" />
-
-              {/* EDIT JOINT PIVOT POINT */}
-              <div className="text-[10px] font-extrabold text-sky-400 tracking-wider flex items-center gap-1 select-none font-mono">
-                <span>🔧</span> EDIT JOINT PIVOT POINT
-              </div>
-
-              {/* Pivot Height (Y) raise/lower slider */}
-              <div className="flex flex-col gap-1.5 w-full">
-                <div className="flex items-center justify-between text-[10px] font-bold text-neutral-400">
-                  <span>Pivot Height (Y)</span>
-                  <span className="font-extrabold text-white">{selectedJoint.position[1].toFixed(1)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="-2.0"
-                  max="2.0"
-                  step="0.01"
-                  value={selectedJoint.position[1]}
-                  onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    updateJoint(selectedObj.id, selectedJoint.id, { position: [selectedJoint.position[0], val, selectedJoint.position[2]] });
-                  }}
-                  className="w-full accent-sky-500 h-1.5 bg-neutral-950 rounded appearance-none cursor-pointer"
-                />
-              </div>
-
-              <div className="h-px bg-neutral-900/60 my-1" />
-
-              {/* Coordinates display */}
-              <div className="text-[8.5px] font-mono text-neutral-500 select-none uppercase tracking-wide">
-                PIVOT: X:{selectedJoint.position[0].toFixed(1)} Y:{selectedJoint.position[1].toFixed(1)} Z:{selectedJoint.position[2].toFixed(1)}
-              </div>
-            </div>
-          )}
-
-          {/* WEIGHT PAINT HEATMAP */}
-          <div className="flex flex-col gap-2">
-            <button
-              onClick={() => setHeatmapActive(!heatmapActive)}
-              className={`w-full py-2 border rounded-xl text-[10px] font-extrabold uppercase tracking-widest flex items-center justify-center gap-1.5 cursor-pointer shadow-md transition-all duration-300 active:scale-[0.98] ${
-                heatmapActive
-                  ? 'bg-rose-600 hover:bg-rose-500 border-rose-500 text-white animate-pulse'
-                  : 'bg-neutral-900/60 hover:bg-neutral-850 border-neutral-800 text-neutral-400 hover:text-neutral-200'
-              }`}
-            >
-              <span>🔥</span> {heatmapActive ? 'Heatmap Overlay Active' : 'Activate Heatmap Overlay'}
-            </button>
-          </div>
-
-          {/* SKELETAL CYCLES */}
-          <div className="flex flex-col bg-[#141416] border border-neutral-900 rounded-xl p-3.5 gap-3.5">
-            <div className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-1.5 select-none font-mono">
-              <span>🎬</span> SKELETAL CYCLES
-            </div>
-
-            <button
-              onClick={() => setLoopActive(!loopActive)}
-              className={`w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-200 active:scale-[0.98] border ${
-                loopActive
-                  ? 'bg-[#153422] border-emerald-500 text-emerald-400'
-                  : 'bg-neutral-900 hover:bg-neutral-850 border-neutral-800 text-white'
-              }`}
-            >
-              {loopActive ? <Pause size={10} /> : <Play size={10} />}
-              <span>{loopActive ? 'PAUSE CYCLE LOOP' : 'ACTIVATE LOOP'}</span>
-            </button>
-
-            <div className="flex flex-col gap-1 w-full">
-              <span className="text-[8px] font-mono text-neutral-500 uppercase tracking-wider">PRESET CYCLE</span>
-              <div className="relative w-full">
-                <select
-                  className="bg-[#1b1b1e] border border-neutral-855 text-white pl-3.5 pr-8 py-2 rounded-lg w-full font-sans text-xs focus:border-sky-500/60 focus:outline-none transition-all cursor-pointer appearance-none uppercase font-extrabold tracking-wide"
-                  value={activeCycle}
-                  onChange={(e) => setActiveCycle(e.target.value)}
-                >
-                  <option value="athletic_walk">ATHLETIC WALK CYCLE</option>
-                  <option value="sneaky_ninja">SNEAKY NINJA RUN</option>
-                  <option value="dance_groove">DANCE GROOVE</option>
-                  <option value="t_pose">T-POSE STANDARD</option>
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-neutral-400">
-                  <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                    <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1 w-full">
-              <div className="flex items-center justify-between text-[9px] font-mono text-neutral-500 uppercase">
-                <span>LOOP SPEED</span>
-                <span className="font-extrabold text-[#10b981]">{loopSpeed}%</span>
-              </div>
-              <input
-                type="range"
-                min="25"
-                max="200"
-                step="5"
-                value={loopSpeed}
-                onChange={(e) => setLoopSpeed(parseInt(e.target.value))}
-                className="w-full accent-[#10b981] h-1 bg-neutral-950 rounded appearance-none cursor-pointer"
-              />
-            </div>
-          </div>
-
-          {/* Clear Rig Button */}
-          {joints.length > 0 && (
-            <button
-              onClick={() => {
-                updateObject(selectedObj.id, { joints: [] });
-                setSelectedJointId(null);
-              }}
-              className="w-full py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 border border-red-500/20 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-            >
-              <Trash2 size={13} />
-              <span>Clear Rig Hierarchy</span>
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   if (activeTool === 'foliage') {
     return (
@@ -727,6 +247,25 @@ export default function InspectorPanel() {
         </div>
 
         <div className="p-3 space-y-4">
+          {/* Expand/Collapse All controls */}
+          <div className="flex justify-end gap-2 px-1 text-[10px] pb-1 border-b border-border/20">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('stellar-inspector-expand-all', { detail: true }))}
+              className="text-text-secondary hover:text-text-primary transition-colors cursor-pointer font-medium border-none bg-transparent"
+            >
+              Expand All
+            </button>
+            <span className="text-text-secondary/40 select-none">|</span>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('stellar-inspector-expand-all', { detail: false }))}
+              className="text-text-secondary hover:text-text-primary transition-colors cursor-pointer font-medium border-none bg-transparent"
+            >
+              Collapse All
+            </button>
+          </div>
+
           <Section title="Environment" icon={Sun} colorClass="text-emerald-500">
             <div className="grid grid-cols-[90px_1fr] items-center gap-2">
               <span className="text-[11px] text-text-secondary">Sky Preset</span>
@@ -1340,6 +879,25 @@ export default function InspectorPanel() {
       </div>
 
       <div className="p-3 space-y-4">
+        {/* Expand/Collapse All controls */}
+        <div className="flex justify-end gap-2 px-1 text-[10px] pb-1 border-b border-border/20">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('stellar-inspector-expand-all', { detail: true }))}
+            className="text-text-secondary hover:text-text-primary transition-colors cursor-pointer font-medium border-none bg-transparent"
+          >
+            Expand All
+          </button>
+          <span className="text-text-secondary/40 select-none">|</span>
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent('stellar-inspector-expand-all', { detail: false }))}
+            className="text-text-secondary hover:text-text-primary transition-colors cursor-pointer font-medium border-none bg-transparent"
+          >
+            Collapse All
+          </button>
+        </div>
+
         {/* Data Group */}
         <Section title="Data" icon={Hash} colorClass="text-zinc-400">
           <div className="grid grid-cols-[60px_1fr] items-center gap-2">
@@ -1367,6 +925,64 @@ export default function InspectorPanel() {
             </div>
           )}
         </Section>
+
+        {(selectedObj.type === 'mesh' || selectedObj.type === 'gltf' || (selectedObj.type as string) === 'fbx') && (
+          <Section title="Asset Source" icon={Layers} colorClass="text-sky-400">
+            <div className="space-y-3">
+              {/* Asset visual card */}
+              <div className="flex gap-3 bg-bg-deep/40 p-2.5 rounded-lg border border-border/40 items-center">
+                {/* Thumbnail area */}
+                <div className="w-12 h-12 rounded border border-border/60 bg-neutral-950 overflow-hidden shrink-0 flex items-center justify-center relative shadow-inner">
+                  {selectedObj.type === 'gltf' || (selectedObj.type as string) === 'fbx' ? (
+                    (() => {
+                      const matchedAsset = assets.find(a => a.url === selectedObj.url);
+                      return (matchedAsset && matchedAsset.thumbnailUrl) ? (
+                        <img src={matchedAsset.thumbnailUrl} alt={selectedObj.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <AssetThumbnailPlaceholder type={selectedObj.type} category="Models" />
+                      );
+                    })()
+                  ) : (
+                    // Primitive visual placeholder (a simple clean Box SVG)
+                    <svg className="w-8 h-8 opacity-70" viewBox="0 0 100 100" fill="none">
+                      <rect x="20" y="20" width="60" height="60" rx="4" stroke="#94a3b8" strokeWidth="2" />
+                      <path d="M20 20 L50 40 L80 20 M50 40 L50 80" stroke="#64748b" strokeWidth="1.5" />
+                    </svg>
+                  )}
+                </div>
+
+                {/* Details area */}
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="text-[9px] text-text-secondary font-bold uppercase tracking-wider leading-none mb-1">
+                    {selectedObj.type === 'gltf' || (selectedObj.type as string) === 'fbx' ? '3D Model Asset' : 'Primitive Shape'}
+                  </div>
+                  <div className="text-[10.5px] text-text-primary font-bold truncate">
+                    {selectedObj.type === 'gltf' || (selectedObj.type as string) === 'fbx'
+                      ? (assets.find(a => a.url === selectedObj.url)?.name || selectedObj.url?.split('/').pop() || 'Unknown Model')
+                      : `${selectedObj.geometry ? selectedObj.geometry.charAt(0).toUpperCase() + selectedObj.geometry.slice(1) : 'Box'} Geometry`
+                    }
+                  </div>
+                  <div className="text-[8.5px] text-text-secondary/70 font-mono truncate mt-0.5" title={selectedObj.url || 'Built-in Procedural Mesh'}>
+                    {selectedObj.type === 'gltf' || (selectedObj.type as string) === 'fbx'
+                      ? selectedObj.url
+                      : 'Built-in Procedural Mesh'
+                    }
+                  </div>
+                </div>
+              </div>
+
+              {/* Replace Button */}
+              <button
+                type="button"
+                onClick={() => setIsReplacingMesh(true)}
+                className="w-full py-1.5 px-3 bg-accent hover:bg-accent/80 text-white font-semibold rounded-md text-[10.5px] font-sans transition-all duration-150 active:scale-[0.98] shadow-sm flex items-center justify-center gap-1.5 cursor-pointer border-none"
+              >
+                <Layers size={12} />
+                <span>Replace Mesh</span>
+              </button>
+            </div>
+          </Section>
+        )}
 
         {selectedObj.celestialProps && (
           <Section title="Celestial" icon={Sun} colorClass="text-amber-400">
@@ -1942,30 +1558,97 @@ export default function InspectorPanel() {
                 className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-[4px] text-[11px] focus:border-accent focus:outline-none transition-all"
                 onChange={(e) => {
                   const preset = e.target.value;
-                  let updates = {
+                  let updates: any = {
                     roughness: selectedObj.material!.roughness,
                     metalness: selectedObj.material!.metalness,
                     envMapIntensity: selectedObj.material!.envMapIntensity,
                   };
-                  if (preset === 'plastic') updates = { roughness: 0.2, metalness: 0, envMapIntensity: 1 };
-                  if (preset === 'neon') updates = { roughness: 1, metalness: 0, envMapIntensity: 5 };
-                  if (preset === 'metal') updates = { roughness: 0.1, metalness: 0.9, envMapIntensity: 1 };
-                  if (preset === 'glass') updates = { roughness: 0, metalness: 0.1, envMapIntensity: 1 };
 
+                  if (preset !== 'water_lake' && preset !== 'water_sea' && preset !== 'water_tropical') {
+                    if (selectedObj.material!.map === 'water') updates.map = undefined;
+                    if (selectedObj.material!.normalMap === 'water') updates.normalMap = undefined;
+                    updates.waveHeight = undefined;
+                    updates.waveSpeed = undefined;
+                  }
+
+                  if (preset === 'plastic') {
+                    updates = { ...updates, roughness: 0.2, metalness: 0, envMapIntensity: 1 };
+                  }
+                  if (preset === 'neon') {
+                    updates = { ...updates, roughness: 1, metalness: 0, envMapIntensity: 5 };
+                  }
+                  if (preset === 'metal') {
+                    updates = { ...updates, roughness: 0.1, metalness: 0.9, envMapIntensity: 1 };
+                  }
+                  if (preset === 'glass') {
+                    updates = { ...updates, roughness: 0, metalness: 0.1, envMapIntensity: 1 };
+                  }
+                  if (preset === 'water' || preset === 'water_lake') {
+                    updates = {
+                      color: '#0f5e9c',
+                      roughness: 0.05,
+                      metalness: 0.1,
+                      envMapIntensity: 1,
+                      map: 'water',
+                      normalMap: 'water',
+                      repeatX: 4,
+                      repeatY: 4,
+                      waveHeight: 0.08,
+                      waveSpeed: 1.0,
+                    };
+                  }
+                  if (preset === 'water_sea') {
+                    updates = {
+                      color: '#021447',
+                      roughness: 0.05,
+                      metalness: 0.1,
+                      envMapIntensity: 1.2,
+                      map: 'water',
+                      normalMap: 'water',
+                      repeatX: 6,
+                      repeatY: 6,
+                      waveHeight: 0.18,
+                      waveSpeed: 1.3,
+                    };
+                  }
+                  if (preset === 'water_tropical') {
+                    updates = {
+                      color: '#058596',
+                      roughness: 0.05,
+                      metalness: 0.1,
+                      envMapIntensity: 1.0,
+                      map: 'water',
+                      normalMap: 'water',
+                      repeatX: 3,
+                      repeatY: 3,
+                      waveHeight: 0.05,
+                      waveSpeed: 0.8,
+                    };
+                  }
+
+                  const isWaterPreset = preset === 'water' || preset === 'water_lake' || preset === 'water_sea' || preset === 'water_tropical';
                   updateObject(selectedObj.id, {
                     material: { ...selectedObj.material!, ...updates },
+                    isSolid: !isWaterPreset,
+                    physicsCollisions: !isWaterPreset,
                   });
                 }}
                 value={
-                  selectedObj.material.envMapIntensity > 2
-                    ? 'neon'
-                    : selectedObj.material.metalness > 0.8
-                      ? 'metal'
-                      : selectedObj.material.roughness < 0.1
-                        ? 'glass'
-                        : selectedObj.material.roughness === 0.2 && selectedObj.material.metalness === 0
-                          ? 'plastic'
-                          : 'custom'
+                  selectedObj.material.map === 'water' && selectedObj.material.normalMap === 'water'
+                    ? selectedObj.material.color === '#021447'
+                      ? 'water_sea'
+                      : selectedObj.material.color === '#058596'
+                        ? 'water_tropical'
+                        : 'water_lake'
+                    : selectedObj.material.envMapIntensity > 2
+                      ? 'neon'
+                      : selectedObj.material.metalness > 0.8
+                        ? 'metal'
+                        : selectedObj.material.roughness < 0.1
+                          ? 'glass'
+                          : selectedObj.material.roughness === 0.2 && selectedObj.material.metalness === 0
+                            ? 'plastic'
+                            : 'custom'
                 }
               >
                 <option value="custom">Custom</option>
@@ -1973,6 +1656,9 @@ export default function InspectorPanel() {
                 <option value="neon">Neon</option>
                 <option value="metal">Metal</option>
                 <option value="glass">Ice/Glass</option>
+                <option value="water_lake">Moving Water (Lake)</option>
+                <option value="water_sea">Moving Water (Deep Sea)</option>
+                <option value="water_tropical">Moving Water (Tropical)</option>
               </select>
             </div>
 
@@ -1994,19 +1680,187 @@ export default function InspectorPanel() {
             </div>
 
             <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Texture</span>
+              <span className="text-[11px] text-text-secondary">Preset Map</span>
               <select
-                className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-[4px] text-[11px] focus:border-accent focus:outline-none transition-all"
+                className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-[4px] text-[11px] focus:border-accent focus:outline-none transition-all animate-fade-in"
                 onChange={(e) => handleMaterialChange('map', e.target.value)}
-                value={selectedObj.material.map || ''}
+                value={
+                  ['grid', 'brick', 'wood', 'metal', 'water'].includes(selectedObj.material.map || '')
+                    ? selectedObj.material.map
+                    : selectedObj.material.map ? 'custom' : ''
+                }
               >
                 <option value="">None (Color Only)</option>
                 <option value="grid">Grid Pattern</option>
                 <option value="brick">Brick Wall</option>
                 <option value="wood">Hardwood</option>
                 <option value="metal">Metal Plate</option>
+                <option value="water">Moving Water</option>
+                {selectedObj.material.map && !['grid', 'brick', 'wood', 'metal', 'water'].includes(selectedObj.material.map) && (
+                  <option value="custom">Custom Texture</option>
+                )}
               </select>
             </div>
+
+            {/* Custom Color/Base Map Picker */}
+            <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+              <span className="text-[11px] text-text-secondary">Custom Map</span>
+              <div className="flex gap-1.5 items-center w-full">
+                {(() => {
+                  const mapPath = selectedObj.material.map || '';
+                  const isPreset = ['grid', 'brick', 'wood', 'metal', 'water'].includes(mapPath);
+                  const mapDisplayPath = isPreset ? `Preset: ${mapPath}` : mapPath;
+                  const mapAsset = assets.find((a) => a.id === mapPath || a.url === mapPath);
+                  const mapFileName = mapAsset
+                    ? mapAsset.name
+                    : mapPath
+                      ? isPreset
+                        ? `${mapPath.charAt(0).toUpperCase() + mapPath.slice(1)} Preset`
+                        : mapPath.split(/[/\\]/).pop() || 'None'
+                      : 'None';
+                  const isPickingThis = isPickingAsset && activePickerTarget === 'materialMap';
+                  return (
+                    <>
+                      <div
+                        className="flex-1 bg-bg-deep/50 border border-border/40 text-text-secondary px-2.5 py-1.5 rounded-[4px] text-[11px] font-mono truncate select-all cursor-default min-w-0"
+                        title={mapDisplayPath || 'No texture linked'}
+                      >
+                        {mapFileName}
+                      </div>
+                      {mapPath && (
+                        <button
+                          type="button"
+                          onClick={() => handleMaterialChange('map', '')}
+                          className="px-2 py-1.5 rounded-[4px] border border-border bg-bg-deep text-red-400 hover:text-red-350 hover:border-red-500/50 transition-all cursor-pointer flex items-center justify-center shrink-0 text-xs font-semibold"
+                          title="Remove custom texture"
+                        >
+                          ×
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isPickingThis) {
+                            setIsPickingAsset(false);
+                            setActivePickerTarget(null);
+                          } else {
+                            setIsPickingAsset(true);
+                            setActivePickerTarget('materialMap');
+                          }
+                        }}
+                        className={`px-2 py-1.5 rounded-[4px] border transition-all flex items-center justify-center gap-1 shrink-0 cursor-pointer text-[10px] font-medium ${
+                          isPickingThis
+                            ? 'bg-accent text-white border-accent shadow-[0_0_12px_rgba(56,189,248,0.5)] animate-pulse'
+                            : 'bg-bg-deep border-border text-text-secondary hover:text-text-primary hover:border-text-secondary'
+                        }`}
+                        title={isPickingThis ? 'Click to cancel picking' : 'Assign from Content Browser'}
+                      >
+                        <Folder size={11} />
+                        <span>{isPickingThis ? 'Picking...' : 'Assign'}</span>
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Custom Normal Map Picker */}
+            <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+              <span className="text-[11px] text-text-secondary">Normal Map</span>
+              <div className="flex gap-1.5 items-center w-full">
+                {(() => {
+                  const normalPath = selectedObj.material.normalMap || '';
+                  const normalAsset = assets.find((a) => a.id === normalPath || a.url === normalPath);
+                  const normalFileName = normalAsset
+                    ? normalAsset.name
+                    : normalPath
+                      ? normalPath.split(/[/\\]/).pop() || 'None'
+                      : 'None';
+                  const isPickingThis = isPickingAsset && activePickerTarget === 'materialNormalMap';
+                  return (
+                    <>
+                      <div
+                        className="flex-1 bg-bg-deep/50 border border-border/40 text-text-secondary px-2.5 py-1.5 rounded-[4px] text-[11px] font-mono truncate select-all cursor-default min-w-0"
+                        title={normalPath || 'No normal map linked'}
+                      >
+                        {normalFileName}
+                      </div>
+                      {normalPath && (
+                        <button
+                          type="button"
+                          onClick={() => handleMaterialChange('normalMap', '')}
+                          className="px-2 py-1.5 rounded-[4px] border border-border bg-bg-deep text-red-400 hover:text-red-350 hover:border-red-500/50 transition-all cursor-pointer flex items-center justify-center shrink-0 text-xs font-semibold"
+                          title="Remove normal map"
+                        >
+                          ×
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isPickingThis) {
+                            setIsPickingAsset(false);
+                            setActivePickerTarget(null);
+                          } else {
+                            setIsPickingAsset(true);
+                            setActivePickerTarget('materialNormalMap');
+                          }
+                        }}
+                        className={`px-2 py-1.5 rounded-[4px] border transition-all flex items-center justify-center gap-1 shrink-0 cursor-pointer text-[10px] font-medium ${
+                          isPickingThis
+                            ? 'bg-accent text-white border-accent shadow-[0_0_12px_rgba(56,189,248,0.5)] animate-pulse'
+                            : 'bg-bg-deep border-border text-text-secondary hover:text-text-primary hover:border-text-secondary'
+                        }`}
+                        title={isPickingThis ? 'Click to cancel picking' : 'Assign from Content Browser'}
+                      >
+                        <Folder size={11} />
+                        <span>{isPickingThis ? 'Picking...' : 'Assign'}</span>
+                      </button>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {(selectedObj.material.map || selectedObj.material.normalMap) && (
+              <>
+                <div className="grid grid-cols-[80px_1fr] items-center gap-2 animate-in fade-in duration-200">
+                  <span className="text-[11px] text-text-secondary">Tiling Repeat X</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="20"
+                      step="0.1"
+                      className="w-full accent-accent"
+                      value={selectedObj.material.repeatX ?? 2}
+                      onChange={(e) => handleMaterialChange('repeatX', parseFloat(e.target.value))}
+                    />
+                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                      {(selectedObj.material.repeatX ?? 2).toFixed(1)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-[80px_1fr] items-center gap-2 animate-in fade-in duration-200">
+                  <span className="text-[11px] text-text-secondary">Tiling Repeat Y</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0.1"
+                      max="20"
+                      step="0.1"
+                      className="w-full accent-accent"
+                      value={selectedObj.material.repeatY ?? 2}
+                      onChange={(e) => handleMaterialChange('repeatY', parseFloat(e.target.value))}
+                    />
+                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                      {(selectedObj.material.repeatY ?? 2).toFixed(1)}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="grid grid-cols-[80px_1fr] items-center gap-2">
               <span className="text-[11px] text-text-secondary">Roughness</span>
@@ -2061,6 +1915,72 @@ export default function InspectorPanel() {
                 </span>
               </div>
             </div>
+
+            <div className="grid grid-cols-[80px_1fr] items-center gap-2 animate-fade-in">
+              <span className="text-[11px] text-text-secondary">Opacity</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  className="w-full accent-accent"
+                  value={selectedObj.material.opacity ?? 1.0}
+                  onChange={(e) => handleMaterialChange('opacity', parseFloat(e.target.value))}
+                />
+                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                  {(selectedObj.material.opacity ?? 1.0).toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {(() => {
+              const isWater =
+                selectedObj.material.map === 'water' ||
+                selectedObj.material.normalMap === 'water' ||
+                (selectedObj.material.map && selectedObj.material.map.includes('waternormals.jpg')) ||
+                (selectedObj.material.normalMap && selectedObj.material.normalMap.includes('waternormals.jpg'));
+              if (!isWater) return null;
+              return (
+                <>
+                  <div className="grid grid-cols-[80px_1fr] items-center gap-2 animate-fade-in">
+                    <span className="text-[11px] text-text-secondary">Wave Height</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.5"
+                        step="0.01"
+                        className="w-full accent-accent"
+                        value={selectedObj.material.waveHeight ?? 0.08}
+                        onChange={(e) => handleMaterialChange('waveHeight', parseFloat(e.target.value))}
+                      />
+                      <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.material.waveHeight ?? 0.08).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-[80px_1fr] items-center gap-2 animate-fade-in">
+                    <span className="text-[11px] text-text-secondary">Wave Speed</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0"
+                        max="3.0"
+                        step="0.1"
+                        className="w-full accent-accent"
+                        value={selectedObj.material.waveSpeed ?? 1.0}
+                        onChange={(e) => handleMaterialChange('waveSpeed', parseFloat(e.target.value))}
+                      />
+                      <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.material.waveSpeed ?? 1.0).toFixed(1)}
+                      </span>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
           </Section>
         )}
 
@@ -2218,13 +2138,14 @@ export default function InspectorPanel() {
                   className="bg-bg-deep border border-border text-text-primary px-2 py-1.5 rounded-md w-full font-mono text-[11px] focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-all disabled:opacity-50"
                   value={selectedObj.behavior || 'none'}
                   onChange={(e) =>
-                    updateObject(selectedObj.id, { behavior: e.target.value as 'none' | 'spin' | 'float' | 'follow' })
+                    updateObject(selectedObj.id, { behavior: e.target.value as 'none' | 'spin' | 'float' | 'follow' | 'buoyancy' })
                   }
                   disabled={isPlaying}
                 >
                   <option value="none">Static (None)</option>
                   <option value="spin">Constant Spin</option>
                   <option value="float">Hover & Bob</option>
+                  <option value="buoyancy">Buoyant Float</option>
                   <option value="follow">Follow Camera</option>
                 </select>
               </div>
@@ -2374,7 +2295,331 @@ export default function InspectorPanel() {
             </div>
           </Section>
         )}
+
+        {selectedObj.characterActions && (
+          <Section title="Character Actions" icon={Activity} colorClass="text-rose-500">
+            <div className="space-y-3">
+              {/* Toggles grid */}
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={selectedObj.characterActions.autoJump === true}
+                    onChange={(e) =>
+                      updateObject(selectedObj.id, {
+                        characterActions: { ...selectedObj.characterActions!, autoJump: e.target.checked },
+                      })
+                    }
+                  />
+                  <span className="text-[11px] text-text-primary">Auto Jump</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={selectedObj.characterActions.doubleJump === true}
+                    onChange={(e) =>
+                      updateObject(selectedObj.id, {
+                        characterActions: { ...selectedObj.characterActions!, doubleJump: e.target.checked },
+                      })
+                    }
+                  />
+                  <span className="text-[11px] text-text-primary">Double Jump</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={selectedObj.characterActions.sprintEnabled === true}
+                    onChange={(e) =>
+                      updateObject(selectedObj.id, {
+                        characterActions: { ...selectedObj.characterActions!, sprintEnabled: e.target.checked },
+                      })
+                    }
+                  />
+                  <span className="text-[11px] text-text-primary">Sprint</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={selectedObj.characterActions.crouchEnabled === true}
+                    onChange={(e) =>
+                      updateObject(selectedObj.id, {
+                        characterActions: { ...selectedObj.characterActions!, crouchEnabled: e.target.checked },
+                      })
+                    }
+                  />
+                  <span className="text-[11px] text-text-primary">Crouch</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={selectedObj.characterActions.dashEnabled === true}
+                    onChange={(e) =>
+                      updateObject(selectedObj.id, {
+                        characterActions: { ...selectedObj.characterActions!, dashEnabled: e.target.checked },
+                      })
+                    }
+                  />
+                  <span className="text-[11px] text-text-primary">Dash / Dodge</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={selectedObj.characterActions.autoClimb === true}
+                    onChange={(e) =>
+                      updateObject(selectedObj.id, {
+                        characterActions: { ...selectedObj.characterActions!, autoClimb: e.target.checked },
+                      })
+                    }
+                  />
+                  <span className="text-[11px] text-text-primary">Auto-Climb</span>
+                </label>
+              </div>
+
+              {selectedObj.characterActions.dashEnabled && (
+                <>
+                  <div className="h-px bg-border my-2" />
+                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Dash Dist</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="1"
+                        max="20"
+                        step="0.5"
+                        className="w-full accent-rose-500"
+                        value={selectedObj.characterActions.dashDistance ?? 5.0}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            characterActions: {
+                              ...selectedObj.characterActions!,
+                              dashDistance: parseFloat(e.target.value),
+                            },
+                          })
+                        }
+                      />
+                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.characterActions.dashDistance ?? 5.0).toFixed(1)}m
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Cooldown</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="5"
+                        step="0.1"
+                        className="w-full accent-rose-500"
+                        value={selectedObj.characterActions.dashCooldown ?? 1.0}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            characterActions: {
+                              ...selectedObj.characterActions!,
+                              dashCooldown: parseFloat(e.target.value),
+                            },
+                          })
+                        }
+                      />
+                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.characterActions.dashCooldown ?? 1.0).toFixed(1)}s
+                      </span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="h-px bg-border my-2" />
+
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 cursor-pointer select-none col-span-2">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={selectedObj.characterActions.footstepAudioEnabled === true}
+                    onChange={(e) =>
+                      updateObject(selectedObj.id, {
+                        characterActions: {
+                          ...selectedObj.characterActions!,
+                          footstepAudioEnabled: e.target.checked,
+                        },
+                      })
+                    }
+                  />
+                  <span className="text-[11px] text-text-primary">Footstep Audio</span>
+                </label>
+              </div>
+
+              {selectedObj.characterActions.footstepAudioEnabled && (
+                <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                  <span className="text-[11px] text-text-secondary">Sample Path</span>
+                  <div className="flex gap-1.5 items-center w-full">
+                    {(() => {
+                      const footstepPath = selectedObj.characterActions.footstepAudioUrl || selectedObj.characterActions.footstepAudioPath || '';
+                      const footstepAsset = assets.find((a) => a.id === footstepPath || a.url === footstepPath);
+                      const footstepFileName = footstepAsset ? footstepAsset.name : (footstepPath ? footstepPath.split(/[/\\]/).pop() || 'None' : 'None');
+                      const isPickingThis = isPickingAsset && activePickerTarget === 'footstepAudioPath';
+                      return (
+                        <>
+                          <div
+                            className="flex-1 bg-bg-deep/50 border border-border/40 text-text-secondary px-2.5 py-1.5 rounded-[4px] text-[11px] font-mono truncate select-all cursor-default min-w-0"
+                            title={footstepPath || 'No sound linked'}
+                          >
+                            {footstepFileName}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isPickingThis) {
+                                setIsPickingAsset(false);
+                                setActivePickerTarget(null);
+                              } else {
+                                setIsPickingAsset(true);
+                                setActivePickerTarget('footstepAudioPath');
+                              }
+                            }}
+                            className={`px-2.5 py-1.5 rounded-[4px] border transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer text-[11px] font-medium ${
+                              isPickingThis
+                                ? 'bg-accent text-white border-accent shadow-[0_0_12px_rgba(56,189,248,0.5)] animate-pulse'
+                                : 'bg-bg-deep border-border text-text-secondary hover:text-text-primary hover:border-text-secondary'
+                            }`}
+                            title={isPickingThis ? 'Click to cancel picking' : 'Assign from Browser'}
+                          >
+                            <Folder size={12} />
+                            <span>{isPickingThis ? 'Picking...' : 'Assign'}</span>
+                          </button>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+        )}
       </div>
+
+      {isReplacingMesh && selectedObj &&
+        createPortal(
+          <div 
+            className="fixed inset-0 bg-neutral-950/60 backdrop-blur-md z-[1000] flex items-center justify-center p-4 animate-in fade-in duration-200" 
+            onClick={() => {
+              setIsReplacingMesh(false);
+              setMeshSearch('');
+            }}
+          >
+            <div 
+              className="bg-bg-panel/75 backdrop-blur-2xl border border-white/10 rounded-2xl w-full max-w-md p-5 flex flex-col shadow-2xl max-h-[80vh] overflow-hidden relative" 
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Top ambient glow line */}
+              <div className="absolute top-0 inset-x-0 h-[2px] bg-gradient-to-r from-transparent via-sky-500/60 to-transparent" />
+
+              {/* Header */}
+              <div className="flex items-start justify-between mb-4">
+                <div className="text-left">
+                  <h3 className="text-sm font-bold text-text-primary tracking-wide">Replace Mesh</h3>
+                  <p className="text-[10px] text-text-secondary mt-1 leading-snug">
+                    Select a 3D model asset to swap the visual mesh. Logic behaviors, parent hierarchy, and physics properties will remain fully intact.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setIsReplacingMesh(false);
+                    setMeshSearch('');
+                  }}
+                  className="text-text-secondary hover:text-text-primary transition-colors p-1 bg-neutral-900 border border-neutral-800 rounded-lg cursor-pointer flex items-center justify-center shrink-0"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Search input */}
+              <div className="relative mb-4 shrink-0">
+                <Search className="absolute left-2.5 top-2.5 text-text-secondary/50" size={12} />
+                <input
+                  type="text"
+                  placeholder="Search 3D models..."
+                  value={meshSearch}
+                  onChange={(e) => setMeshSearch(e.target.value)}
+                  className="w-full bg-bg-deep border border-border text-text-primary pl-8 pr-3 py-1.5 rounded-lg text-[11px] font-sans placeholder-text-secondary/50 focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-all"
+                />
+              </div>
+
+              {/* Scrollable Model Grid */}
+              <div className="grid grid-cols-3 gap-2.5 overflow-y-auto flex-1 pr-1 scrollbar-thin">
+                {models
+                  .filter((model) => model.name.toLowerCase().includes(meshSearch.toLowerCase()))
+                  .map((model) => {
+                    return (
+                      <div
+                        key={model.id}
+                        onClick={() => {
+                          const isFbx = model.url?.toLowerCase().endsWith('.fbx');
+                          updateObject(selectedObj.id, {
+                            type: isFbx ? ('fbx' as any) : 'gltf',
+                            url: model.url,
+                            geometry: undefined,
+                          });
+                          setIsReplacingMesh(false);
+                          setMeshSearch('');
+                        }}
+                        className="bg-bg-surface/30 hover:bg-accent/10 hover:border-accent/40 border border-border/50 rounded-xl p-2 flex flex-col items-center gap-2 cursor-pointer transition-all duration-150 group relative"
+                      >
+                        <div className="w-12 h-12 rounded-lg bg-neutral-950/65 overflow-hidden flex items-center justify-center shrink-0 border border-border/20 shadow-inner">
+                          {model.thumbnailUrl ? (
+                            <img src={model.thumbnailUrl} alt={model.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <AssetThumbnailPlaceholder type={model.type} category="Models" />
+                          )}
+                        </div>
+                        <div className="flex flex-col w-full text-center min-w-0">
+                          <span className="text-[9px] font-semibold text-text-primary truncate px-0.5" title={model.name}>
+                            {model.name}
+                          </span>
+                          <span className="text-[7.5px] text-text-secondary/60 font-mono mt-0.5">
+                            {model.url?.toLowerCase().endsWith('.fbx') ? 'fbx' : 'gltf'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                {models.filter((model) => model.name.toLowerCase().includes(meshSearch.toLowerCase())).length === 0 && (
+                  <div className="col-span-3 py-8 text-center text-[11px] text-text-secondary">
+                    No matching models found.
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="flex justify-end pt-3 border-t border-border/30 mt-4 shrink-0">
+                <button
+                  onClick={() => {
+                    setIsReplacingMesh(false);
+                    setMeshSearch('');
+                  }}
+                  className="px-3.5 py-1.5 bg-neutral-900 border border-neutral-800 hover:bg-neutral-800 text-text-primary rounded-lg text-[10px] font-bold cursor-pointer active:scale-95 transition-all"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      }
     </div>
   );
 }

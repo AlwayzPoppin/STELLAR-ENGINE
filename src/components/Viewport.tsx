@@ -1,5 +1,5 @@
 import React, { Suspense, useRef, useState, useMemo, useEffect, useCallback } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useThree, events } from '@react-three/fiber';
 import {
   OrbitControls,
   Environment,
@@ -15,16 +15,19 @@ import {
   Stars,
   Stats,
 } from '@react-three/drei';
-import { Physics, RigidBody, CuboidCollider, BallCollider } from '@react-three/rapier';
+import { Physics, RigidBody, CuboidCollider, BallCollider, useRapier } from '@react-three/rapier';
 import { Geometry, Base, Addition, Subtraction, Intersection } from '@react-three/csg';
 import { EffectComposer, Bloom, ToneMapping, Vignette, Outline, Selection, Select, GodRays } from '@react-three/postprocessing';
 import { useStore, SceneObject, FoliageInstanceData } from '../store/useStore';
 import { useAssetStore } from '../store/useAssetStore';
 import * as THREE from 'three';
-import { Layers, ChevronLeft, ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { Layers, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Play, Pause } from 'lucide-react';
 import { BlendFunction, KernelSize } from 'postprocessing';
 
 
+
+let playerRigidBodyRef: any = null;
 
 // Convert color temperature in Kelvin to approximate RGB
 function kelvinToColor(kelvin: number): THREE.Color {
@@ -55,8 +58,8 @@ function DayNightCycle() {
   const environment = useStore((state) => state.environment);
   const objects = useStore((state) => state.objects);
   const { scene } = useThree();
-  const sunLightRef = useRef<any>();
-  const moonLightRef = useRef<any>();
+  const sunLightRef = useRef<any>(null);
+  const moonLightRef = useRef<any>(null);
   const [sunPos, setSunPos] = useState<[number, number, number]>([200, 400, 200]);
   const [skyParams, setSkyParams] = useState({ turbidity: 10, rayleigh: 3 });
   const [ambientInt, setAmbientInt] = useState(0.2);
@@ -77,9 +80,12 @@ function DayNightCycle() {
   const sunColor = useMemo(() => kelvinToColor(sunCelestial.colorTemperature), [sunCelestial.colorTemperature]);
   const moonColor = useMemo(() => kelvinToColor(moonCelestial.colorTemperature), [moonCelestial.colorTemperature]);
 
+  const isPaused = useStore((state) => state.isPaused);
   const startClockTime = useRef(0);
   const startTimeRef = useRef(environment.timeOfDay);
   const prevIsPlaying = useRef(isPlaying);
+  const prevIsPaused = useRef(isPaused);
+  const pauseStartTime = useRef(0);
 
   useFrame((state) => {
     let currentHour = environment.timeOfDay;
@@ -89,19 +95,30 @@ function DayNightCycle() {
         // Just started playing! Record start time
         startClockTime.current = state.clock.getElapsedTime();
         startTimeRef.current = environment.timeOfDay;
+        pauseStartTime.current = 0;
       }
 
-      const elapsed = state.clock.getElapsedTime() - startClockTime.current;
-      currentHour = (startTimeRef.current + (elapsed / (environment.cycleDuration || 60)) * 24) % 24;
+      if (isPaused) {
+        if (!prevIsPaused.current) {
+          pauseStartTime.current = state.clock.getElapsedTime();
+        }
+      } else {
+        if (prevIsPaused.current && pauseStartTime.current > 0) {
+          startClockTime.current += (state.clock.getElapsedTime() - pauseStartTime.current);
+        }
+        const elapsed = state.clock.getElapsedTime() - startClockTime.current;
+        currentHour = (startTimeRef.current + (elapsed / (environment.cycleDuration || 60)) * 24) % 24;
+      }
     }
 
     prevIsPlaying.current = isPlaying;
+    prevIsPaused.current = isPaused;
 
     // Update sky colors
     const { top, bottom } = getSkyColors(currentHour);
     const skyObj = scene.getObjectByName('SkyDome');
     if (skyObj) {
-      const mat = skyObj.material as THREE.ShaderMaterial;
+      const mat = (skyObj as any).material as THREE.ShaderMaterial;
       if (mat.uniforms) {
         mat.uniforms.colorTop.value = top;
         mat.uniforms.colorBottom.value = bottom;
@@ -300,7 +317,7 @@ function SunGodRays() {
   const environment = useStore((s) => s.environment);
   const sunCelestial = useStore((s) => {
     const sunObj = s.objects.find((o) => o.id === 'obj_sun');
-    return sunObj?.celestialProps ?? { volumetricIntensity: 1.0 };
+    return (sunObj?.celestialProps ?? { volumetricIntensity: 1.0 }) as any;
   });
 
   // Create a mesh purely in memory. It is NOT rendered in the scene graph,
@@ -349,8 +366,8 @@ function SunGodRays() {
   );
 }
 
-function GltfModel({ url }: { url: string }) {
-  const { scene, animations } = useGLTF(url);
+function GltfModel({ url, isPlayer }: { url: string; isPlayer?: boolean }) {
+  const { scene, animations: selfAnimations } = useGLTF(url);
   const clonedScene = useMemo(() => {
     const clone = scene.clone();
 
@@ -384,27 +401,130 @@ function GltfModel({ url }: { url: string }) {
       }
     });
 
+    if (url.includes('humanoid+robot') || url.includes('humanoid_robot')) {
+      clone.rotation.y = Math.PI / 2;
+    }
+
     return clone;
   }, [scene, url]);
 
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const actionsRef = useRef<Record<string, THREE.AnimationAction>>({});
+  const activeActionNameRef = useRef<string>('');
   const isPlaying = useStore((state) => state.isPlaying);
+  const isPaused = useStore((state) => state.isPaused);
+  const playerAnimationState = useStore((state) => state.playerAnimationState);
 
   useEffect(() => {
-    if (animations && animations.length > 0 && clonedScene) {
-      const mixer = new THREE.AnimationMixer(clonedScene);
-      mixerRef.current = mixer;
-      const action = mixer.clipAction(animations[0]);
-      action.play();
-      return () => {
-        action.stop();
-        mixer.uncacheRoot(clonedScene);
-      };
+    if (!clonedScene) return;
+
+    const mixer = new THREE.AnimationMixer(clonedScene);
+    mixerRef.current = mixer;
+
+    const clips = selfAnimations;
+    const actions: Record<string, THREE.AnimationAction> = {};
+
+    if (clips && clips.length > 0) {
+      clips.forEach((clip) => {
+        actions[clip.name] = mixer.clipAction(clip);
+      });
     }
-  }, [animations, clonedScene]);
+
+    actionsRef.current = actions;
+
+    const findClipForState = (stateName: string, animationClips: THREE.AnimationClip[]) => {
+      if (!animationClips || animationClips.length === 0) return null;
+      const searchTerms: Record<string, string[]> = {
+        idle: ['idle'],
+        walk: ['walk', 'jog'],
+        sprint: ['sprint', 'run'],
+        jump: ['jump', 'leap'],
+        dash: ['dash', 'roll', 'dodge'],
+        climb: ['climb']
+      };
+      const terms = searchTerms[stateName] || [stateName];
+      for (const term of terms) {
+        const found = animationClips.find(clip => clip.name.toLowerCase().includes(term.toLowerCase()));
+        if (found) return found;
+      }
+      return null;
+    };
+
+    const stateClips: Record<string, string> = {};
+    ['idle', 'walk', 'sprint', 'jump', 'dash', 'climb'].forEach(stateName => {
+      const match = findClipForState(stateName, clips);
+      if (match) {
+        stateClips[stateName] = match.name;
+      }
+    });
+
+    let initialAction: THREE.AnimationAction | null = null;
+    if (isPlayer) {
+      const clipName = stateClips[playerAnimationState];
+      initialAction = clipName ? actions[clipName] : (Object.values(actions)[0] || null);
+      activeActionNameRef.current = clipName || (Object.keys(actions)[0] || '');
+    } else {
+      initialAction = Object.values(actions)[0] || null;
+    }
+
+    if (initialAction) {
+      initialAction.play();
+    }
+
+    return () => {
+      mixer.stopAllAction();
+      mixer.uncacheRoot(clonedScene);
+      mixerRef.current = null;
+      actionsRef.current = {};
+    };
+  }, [clonedScene, isPlayer, selfAnimations]);
+
+  useEffect(() => {
+    if (!isPlayer || !mixerRef.current || !actionsRef.current) return;
+
+    const findClipForState = (stateName: string, animationClips: THREE.AnimationClip[]) => {
+      if (!animationClips || animationClips.length === 0) return null;
+      const searchTerms: Record<string, string[]> = {
+        idle: ['idle'],
+        walk: ['walk', 'jog'],
+        sprint: ['sprint', 'run'],
+        jump: ['jump', 'leap'],
+        dash: ['dash', 'roll', 'dodge'],
+        climb: ['climb']
+      };
+      const terms = searchTerms[stateName] || [stateName];
+      for (const term of terms) {
+        const found = animationClips.find(clip => clip.name.toLowerCase().includes(term.toLowerCase()));
+        if (found) return found;
+      }
+      return null;
+    };
+
+    const match = findClipForState(playerAnimationState, selfAnimations);
+    const nextClipName = match ? match.name : null;
+    if (!nextClipName) return;
+
+    const nextAction = actionsRef.current[nextClipName];
+    const prevClipName = activeActionNameRef.current;
+    const prevAction = prevClipName ? actionsRef.current[prevClipName] : null;
+
+    if (nextAction && nextAction !== prevAction) {
+      nextAction.reset();
+      nextAction.setEffectiveWeight(1);
+      nextAction.setEffectiveTimeScale(1);
+
+      if (prevAction) {
+        prevAction.crossFadeTo(nextAction, 0.2, true);
+      } else {
+        nextAction.fadeIn(0.2);
+      }
+      nextAction.play();
+      activeActionNameRef.current = nextClipName;
+    }
+  }, [playerAnimationState, isPlayer, selfAnimations]);
 
   useFrame((_, delta) => {
-    if (mixerRef.current && isPlaying) {
+    if (mixerRef.current && isPlaying && !isPaused) {
       mixerRef.current.update(delta);
     }
   });
@@ -427,6 +547,7 @@ function FbxModel({ url }: { url: string }) {
 
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const isPlaying = useStore((state) => state.isPlaying);
+  const isPaused = useStore((state) => state.isPaused);
 
   useEffect(() => {
     if (fbx.animations && fbx.animations.length > 0 && clonedScene) {
@@ -442,7 +563,7 @@ function FbxModel({ url }: { url: string }) {
   }, [fbx.animations, clonedScene]);
 
   useFrame((_, delta) => {
-    if (mixerRef.current && isPlaying) {
+    if (mixerRef.current && isPlaying && !isPaused) {
       mixerRef.current.update(delta);
     }
   });
@@ -456,46 +577,197 @@ const TEXTURE_URLS: Record<string, string> = {
   wood: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/hardwood2_diffuse.jpg',
   metal:
     'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/floors/FloorsCheckerboard_S_Diffuse.jpg',
+  water: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/waternormals.jpg',
 };
 
 function CustomMaterial({ material }: { material: SceneObject['material'] }) {
   const wireframeMode = useStore((state) => state.wireframeMode);
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
+  const [normalTexture, setNormalTexture] = useState<THREE.Texture | null>(null);
+
+  const rx = material?.repeatX ?? 2;
+  const ry = material?.repeatY ?? 2;
+
+  const textureRef = useRef<THREE.Texture | null>(null);
+  const normalTextureRef = useRef<THREE.Texture | null>(null);
+
+  const uTimeRef = useRef<{ value: number } | null>(null);
+  const uWaveHeightRef = useRef<{ value: number } | null>(null);
+  const uWaveSpeedRef = useRef<{ value: number } | null>(null);
+
+  const waveHeight = material?.waveHeight ?? 0.08;
+  const waveSpeed = material?.waveSpeed ?? 1.0;
+
+  const isWater =
+    material?.map === 'water' ||
+    material?.normalMap === 'water' ||
+    (material?.map && material.map.includes('waternormals.jpg')) ||
+    (material?.normalMap && material.normalMap.includes('waternormals.jpg'));
 
   useEffect(() => {
-    if (material?.map && TEXTURE_URLS[material.map]) {
-      new THREE.TextureLoader().load(TEXTURE_URLS[material.map], (tex) => {
+    textureRef.current = texture;
+  }, [texture]);
+
+  useEffect(() => {
+    normalTextureRef.current = normalTexture;
+  }, [normalTexture]);
+
+  useEffect(() => {
+    if (uWaveHeightRef.current) {
+      uWaveHeightRef.current.value = waveHeight;
+    }
+  }, [waveHeight]);
+
+  useEffect(() => {
+    if (uWaveSpeedRef.current) {
+      uWaveSpeedRef.current.value = waveSpeed;
+    }
+  }, [waveSpeed]);
+
+  useFrame((state) => {
+    if (isWater) {
+      const time = state.clock.getElapsedTime();
+      if (uTimeRef.current) {
+        uTimeRef.current.value = time;
+      }
+      if (textureRef.current) {
+        textureRef.current.offset.x = time * 0.015;
+        textureRef.current.offset.y = time * 0.015;
+      }
+      if (normalTextureRef.current) {
+        normalTextureRef.current.offset.x = -time * 0.02;
+        normalTextureRef.current.offset.y = time * 0.01;
+      }
+    }
+  });
+
+  useEffect(() => {
+    if (material?.map) {
+      const url = TEXTURE_URLS[material.map] || material.map;
+      new THREE.TextureLoader().load(url, (tex) => {
         tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-        tex.repeat.set(2, 2);
+        tex.repeat.set(rx, ry);
         setTexture(tex);
+      }, undefined, (err) => {
+        console.error('Failed to load custom color map texture:', err);
       });
     } else {
       setTexture(null);
     }
   }, [material?.map]);
 
+  useEffect(() => {
+    if (material?.normalMap) {
+      const url = TEXTURE_URLS[material.normalMap] || material.normalMap;
+      new THREE.TextureLoader().load(url, (tex) => {
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(rx, ry);
+        setNormalTexture(tex);
+      }, undefined, (err) => {
+        console.error('Failed to load custom normal map texture:', err);
+      });
+    } else {
+      setNormalTexture(null);
+    }
+  }, [material?.normalMap]);
+
+  useEffect(() => {
+    if (texture) {
+      texture.repeat.set(rx, ry);
+      texture.needsUpdate = true;
+    }
+  }, [texture, rx, ry]);
+
+  useEffect(() => {
+    if (normalTexture) {
+      normalTexture.repeat.set(rx, ry);
+      normalTexture.needsUpdate = true;
+    }
+  }, [normalTexture, rx, ry]);
+
   if (!material) return null;
 
   return (
     <meshStandardMaterial
+      key={isWater ? 'water' : 'normal'}
       color={material.color}
-      roughness={material.roughness}
-      metalness={material.metalness}
+      roughness={isWater ? 0.05 : material.roughness}
+      metalness={isWater ? 0.1 : material.metalness}
       envMapIntensity={material.envMapIntensity}
       map={texture}
+      normalMap={normalTexture}
       wireframe={wireframeMode}
+      transparent={isWater || (material.opacity !== undefined && material.opacity < 1.0)}
+      opacity={material.opacity !== undefined ? material.opacity : (isWater ? 0.65 : 1.0)}
+      onBeforeCompile={(shader) => {
+        if (isWater) {
+          shader.uniforms.uTime = { value: 0 };
+          shader.uniforms.uWaveHeight = { value: waveHeight };
+          shader.uniforms.uWaveSpeed = { value: waveSpeed };
+          uTimeRef.current = shader.uniforms.uTime;
+          uWaveHeightRef.current = shader.uniforms.uWaveHeight;
+          uWaveSpeedRef.current = shader.uniforms.uWaveSpeed;
+
+          shader.vertexShader = `
+            uniform float uTime;
+            uniform float uWaveHeight;
+            uniform float uWaveSpeed;
+            varying float vWaveHeight;
+          ` + shader.vertexShader;
+
+          shader.vertexShader = shader.vertexShader.replace(
+            '#include <begin_vertex>',
+            `
+              #include <begin_vertex>
+              float wave = sin(position.x * 4.0 + uTime * 2.0 * uWaveSpeed) * uWaveHeight + 
+                           cos(position.z * 4.0 + uTime * 1.5 * uWaveSpeed) * uWaveHeight;
+              transformed.y += wave;
+              vWaveHeight = wave;
+            `
+          );
+
+          shader.fragmentShader = `
+            uniform float uWaveHeight;
+            varying float vWaveHeight;
+          ` + shader.fragmentShader;
+
+          shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <map_fragment>',
+            `
+              #include <map_fragment>
+              
+              vec3 baseColor = diffuseColor.rgb;
+              vec3 deepColor = baseColor * 0.15;
+              vec3 crestColor = clamp(baseColor * 1.4 + vec3(0.0, 0.15, 0.2), 0.0, 1.0);
+              
+              float heightFactor = (vWaveHeight / max(0.01, uWaveHeight)) * 0.5 + 0.5;
+              heightFactor = clamp(heightFactor, 0.0, 1.0);
+              
+              vec3 waterColor = mix(deepColor, crestColor, heightFactor);
+              
+              float foamThreshold = 0.85;
+              if (heightFactor > foamThreshold) {
+                float foamIntensity = (heightFactor - foamThreshold) / (1.0 - foamThreshold);
+                waterColor = mix(waterColor, vec3(1.0, 1.0, 1.0), foamIntensity * 0.45);
+              }
+              
+              diffuseColor.rgb = waterColor;
+            `
+          );
+        }
+      }}
     />
   );
 }
 
-function renderGeometry(geometryType?: string) {
+function renderGeometry(geometryType?: string, isWater?: boolean) {
   switch (geometryType) {
     case 'box':
-      return <boxGeometry args={[1, 1, 1]} />;
+      return <boxGeometry args={[1, 1, 1, isWater ? 16 : 1, isWater ? 16 : 1, isWater ? 16 : 1]} />;
     case 'sphere':
       return <sphereGeometry args={[0.5, 64, 64]} />;
     case 'plane':
-      return <planeGeometry args={[1, 1]} />;
+      return <planeGeometry args={[1, 1, isWater ? 64 : 1, isWater ? 64 : 1]} />;
     case 'cylinder':
       return <cylinderGeometry args={[0.5, 0.5, 1, 32]} />;
     case 'cone':
@@ -588,20 +860,79 @@ const SceneNode = React.memo(function SceneNode({
 
   // FIX 1: Include anchored objects so floors/walls always enter the physics engine.
   const hasPhysics = (obj.physics && obj.physics !== 'none') || obj.anchored;
-  const isSimulating = isPlaying && hasPhysics && activeTool !== 'skeleton_rig';
+  const isSimulating = isPlaying && hasPhysics;
+
+  const handleRef = useCallback((node: any) => {
+    ref.current = node;
+    if (obj.id === 'obj_player') {
+      if (node && typeof node.translation === 'function') {
+        playerRigidBodyRef = node;
+      } else {
+        playerRigidBodyRef = null;
+      }
+    }
+  }, [obj.id]);
 
   useFrame((state, delta) => {
-    if (!isPlaying || !ref.current) return;
-    if (obj.behavior === 'spin') {
-      ref.current.rotation.y += delta;
-      ref.current.rotation.x += delta * 0.5;
-    } else if (obj.behavior === 'float') {
-      ref.current.position.y = initialPos.current[1] + Math.sin(state.clock.elapsedTime * 2 + obj.position[0]) * 0.5;
-    } else if (obj.behavior === 'follow') {
-      const targetPos = state.camera.position.clone();
-      targetPos.y = ref.current.position.y;
-      ref.current.position.lerp(targetPos, delta * 1.5);
-      ref.current.lookAt(targetPos);
+    const isPaused = useStore.getState().isPaused;
+    if (!isPlaying || isPaused || !ref.current) return;
+    if (isSimulating) {
+      if (obj.behavior === 'spin') {
+        const r = ref.current.rotation();
+        const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
+        const deltaQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), delta);
+        q.multiply(deltaQ);
+        ref.current.setRotation(q, true);
+      } else if (obj.behavior === 'float') {
+        const t = ref.current.translation();
+        const newY = initialPos.current[1] + Math.sin(state.clock.elapsedTime * 2 + obj.position[0]) * 0.5;
+        ref.current.setTranslation({ x: t.x, y: newY, z: t.z }, true);
+      } else if (obj.behavior === 'buoyancy') {
+        const t = ref.current.translation();
+        const time = state.clock.elapsedTime;
+        const speed = 1.5;
+        const phase = obj.position[0] * 0.5 + obj.position[2] * 0.5;
+        const newY = initialPos.current[1] + Math.sin(time * speed + phase) * 0.2;
+        ref.current.setTranslation({ x: t.x, y: newY, z: t.z }, true);
+
+        const pitch = Math.sin(time * speed * 0.8 + phase) * 0.05;
+        const roll = Math.cos(time * speed * 0.6 + phase + 1.0) * 0.05;
+        const initialRot = new THREE.Euler(...obj.rotation);
+        const tiltEuler = new THREE.Euler(pitch, 0, roll);
+        const q = new THREE.Quaternion().setFromEuler(initialRot).multiply(new THREE.Quaternion().setFromEuler(tiltEuler));
+        ref.current.setRotation(q, true);
+      } else if (obj.behavior === 'follow') {
+        const t = ref.current.translation();
+        const targetPos = state.camera.position.clone();
+        targetPos.y = t.y;
+        const currentPos = new THREE.Vector3(t.x, t.y, t.z);
+        currentPos.lerp(targetPos, delta * 1.5);
+        ref.current.setTranslation({ x: currentPos.x, y: currentPos.y, z: currentPos.z }, true);
+      }
+    } else {
+      if (obj.behavior === 'spin') {
+        ref.current.rotation.y += delta;
+        ref.current.rotation.x += delta * 0.5;
+      } else if (obj.behavior === 'float') {
+        ref.current.position.y = initialPos.current[1] + Math.sin(state.clock.elapsedTime * 2 + obj.position[0]) * 0.5;
+      } else if (obj.behavior === 'buoyancy') {
+        const time = state.clock.elapsedTime;
+        const speed = 1.5;
+        const phase = obj.position[0] * 0.5 + obj.position[2] * 0.5;
+        ref.current.position.y = initialPos.current[1] + Math.sin(time * speed + phase) * 0.2;
+
+        const pitch = Math.sin(time * speed * 0.8 + phase) * 0.05;
+        const roll = Math.cos(time * speed * 0.6 + phase + 1.0) * 0.05;
+        const initialRot = new THREE.Euler(...obj.rotation);
+        const tiltEuler = new THREE.Euler(pitch, 0, roll);
+        const q = new THREE.Quaternion().setFromEuler(initialRot).multiply(new THREE.Quaternion().setFromEuler(tiltEuler));
+        ref.current.rotation.setFromQuaternion(q);
+      } else if (obj.behavior === 'follow') {
+        const targetPos = state.camera.position.clone();
+        targetPos.y = ref.current.position.y;
+        ref.current.position.lerp(targetPos, delta * 1.5);
+        ref.current.lookAt(targetPos);
+      }
     }
 
     if (obj.scripts && obj.scripts.length > 0) {
@@ -632,12 +963,20 @@ const SceneNode = React.memo(function SceneNode({
 
   const groupContent = (
     <group
-      ref={isSimulating ? null : ref}
+      ref={isSimulating ? null : handleRef}
       name={obj.name}
       position={isSimulating ? [0, 0, 0] : obj.position}
       rotation={isSimulating ? [0, 0, 0] : obj.rotation}
       scale={obj.scale}
       onPointerDown={(e) => {
+        // Guard: block all pointer events when gizmo handles are focused
+        const gf = useStore.getState().gizmoFocused;
+        console.log(`[SceneNode:${obj.id}] onPointerDown — gizmoFocused=${gf}, button=${e.button}`);
+        if (gf) {
+          console.log(`[SceneNode:${obj.id}] BLOCKED by gizmoFocused guard`);
+          e.stopPropagation();
+          return;
+        }
         if (e.button === 0 && !obj.locked) {
           e.stopPropagation();
           selectObject(obj.id);
@@ -647,6 +986,11 @@ const SceneNode = React.memo(function SceneNode({
         }
       }}
       onContextMenu={(e) => {
+        // Guard: block context menu when gizmo is focused
+        if (useStore.getState().gizmoFocused) {
+          e.stopPropagation();
+          return;
+        }
         e.stopPropagation();
 
         if (dragStartRef.current) {
@@ -664,19 +1008,28 @@ const SceneNode = React.memo(function SceneNode({
       }}
     >
       <>
-        {obj.type !== 'gltf' && obj.type !== 'light' && obj.type !== 'group' && obj.type !== 'csg' && (
-          /* Check if it's one of your new effect identifiers */
-          (['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.type) || ['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.geometry || '')) ? (
-            <ParticleEmitter type={['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.type) ? obj.type : (obj.geometry || '')} isPlaying={isPlaying} particleProps={obj.particleProps} />
-          ) : (
-            /* Standard Solid Shapes Mesh Handler fallback */
-            <mesh castShadow receiveShadow visible={!isCSGChild && obj.visible !== false}>
-              {renderGeometry(obj.geometry)}
-              {isSelected && !isPlaying && showOverlays && <meshBasicMaterial color="#ffffff" wireframe />}
-              {obj.material && <CustomMaterial material={obj.material} />}
-            </mesh>
-          )
-        )}
+        {obj.type !== 'gltf' && obj.type !== 'light' && obj.type !== 'group' && obj.type !== 'csg' && (() => {
+          const isObjWater = !!(obj.material && (
+            obj.material.map === 'water' ||
+            obj.material.normalMap === 'water' ||
+            (obj.material.map && obj.material.map.includes('waternormals.jpg')) ||
+            (obj.material.normalMap && obj.material.normalMap.includes('waternormals.jpg'))
+          ));
+          return (
+            (['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.type) || ['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.geometry || '')) ? (
+              <ParticleEmitter type={['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.type) ? obj.type : (obj.geometry || '')} isPlaying={isPlaying} particleProps={obj.particleProps} />
+            ) : (
+              <mesh castShadow receiveShadow visible={!isCSGChild && obj.visible !== false}>
+                {renderGeometry(obj.geometry, isObjWater)}
+                {isSelected && !isPlaying && showOverlays ? (
+                  <meshBasicMaterial color="#ffffff" wireframe />
+                ) : (
+                  obj.material && <CustomMaterial material={obj.material} />
+                )}
+              </mesh>
+            )
+          );
+        })()}
 
         {obj.type === 'csg' && (
           <mesh castShadow receiveShadow>
@@ -695,18 +1048,21 @@ const SceneNode = React.memo(function SceneNode({
                 return <Base key={`csg-${child.id}`} {...props}>{geom}</Base>;
               })}
             </Geometry>
-            {isSelected && !isPlaying && showOverlays && <meshBasicMaterial color="#ffffff" wireframe />}
-            {obj.material && <CustomMaterial material={obj.material} />}
+            {isSelected && !isPlaying && showOverlays ? (
+              <meshBasicMaterial color="#ffffff" wireframe />
+            ) : (
+              obj.material && <CustomMaterial material={obj.material} />
+            )}
           </mesh>
         )}
 
         {obj.type === 'gltf' && obj.url && (
           <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
-            <GltfModel url={obj.url} />
+            <GltfModel url={obj.url} isPlayer={obj.id === 'obj_player'} />
           </Suspense>
         )}
 
-        {obj.type === 'fbx' && obj.url && (
+        {(obj.type as string) === 'fbx' && obj.url && (
           <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
             <FbxModel url={obj.url} />
           </Suspense>
@@ -767,10 +1123,6 @@ const SceneNode = React.memo(function SceneNode({
         )}
       </>
 
-      {activeTool === 'skeleton_rig' && obj.joints && (
-        <SkeletalVisualizer joints={obj.joints} parentScale={obj.scale} />
-      )}
-
       {children.map((child) => (
         <SceneNode
           key={child.id}
@@ -794,14 +1146,14 @@ const SceneNode = React.memo(function SceneNode({
     const type = obj.physicsColliderType || 'auto';
     if (type !== 'auto') return type as any;
     if (obj.type === 'mesh') return 'hull';
-    if (obj.type === 'gltf' || obj.type === 'fbx') return 'hull';
+    if (obj.type === 'gltf' || (obj.type as string) === 'fbx') return 'hull';
     return undefined;
   };
 
   // FIX 2: Keep the RigidBody's rotation equal to the object's rotation so
   //         rotated planes (walls, ramps) have correctly-oriented colliders.
   // FIX 3: Safely omit mass when undefined so Rapier auto-computes it from the colliders.
-  const hasJoints = obj.joints && obj.joints.length > 0;
+  const hasJoints = false;
   const wrapperProps = isSimulating
     ? {
         type: hasJoints
@@ -814,13 +1166,14 @@ const SceneNode = React.memo(function SceneNode({
         restitution: obj.physicsRestitution !== undefined ? obj.physicsRestitution : 0.2,
         friction: obj.physicsFriction !== undefined ? obj.physicsFriction : 0.5,
         ccd: true,
+        ...(obj.id === 'obj_player' ? { lockRotations: true } : {}),
       }
     : {};
 
   return (
     <>
       {isSimulating ? (
-        <RigidBody {...wrapperProps} ref={ref}>
+        <RigidBody key={`${obj.id}-${obj.url || ''}-${obj.geometry || ''}`} {...wrapperProps} ref={handleRef}>
           {/* groupContent inherits the RigidBody transform — no extra wrapper needed */}
           {groupContent}
 
@@ -848,41 +1201,401 @@ const SceneNode = React.memo(function SceneNode({
         groupContent
       )}
 
-      {isSelected && !isPlaying && activeTool !== 'foliage' && activeTool !== 'skeleton_rig' && (
-        <TransformControls
-          object={ref}
-          mode={transformMode}
-          translationSnap={snapGrid ? snapValue : null}
-          rotationSnap={snapGrid ? Math.PI / 8 : null}
-          scaleSnap={snapGrid ? 0.5 : null}
-          onMouseDown={() => setOrbitEnabled(false)}
-          onMouseUp={() => {
-            setOrbitEnabled(true);
-            if (ref.current) {
-              const o = ref.current;
-              updateObject(obj.id, {
-                position: [o.position.x, o.position.y, o.position.z],
-                rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
-                scale: [o.scale.x, o.scale.y, o.scale.z],
-              });
-            }
-          }}
+      {isSelected && !isPlaying && activeTool !== 'foliage' && obj.type !== 'group' && (
+        <GizmoWrapper
+          objRef={ref}
+          objId={obj.id}
+          transformMode={transformMode}
+          snapGrid={snapGrid}
+          snapValue={snapValue}
+          setOrbitEnabled={setOrbitEnabled}
+          updateObject={updateObject}
+          obj={obj}
         />
       )}
     </>
   );
 });
 
+/**
+ * GizmoWrapper — robust transform-controls wrapper that:
+ * 1. Never gets stuck in grasp state (global pointerup + safety timeout)
+ * 2. Supports center-pivot mode (shifts gizmo to bounding-box center)
+ * 3. Shows grab/grabbing cursor feedback
+ */
+function GizmoWrapper({
+  objRef,
+  objId,
+  transformMode,
+  snapGrid,
+  snapValue,
+  setOrbitEnabled,
+  updateObject,
+  obj,
+}: {
+  objRef: React.RefObject<any>;
+  objId: string;
+  transformMode: 'translate' | 'rotate' | 'scale';
+  snapGrid: boolean;
+  snapValue: number;
+  setOrbitEnabled: (v: boolean) => void;
+  updateObject: (id: string, updates: Partial<SceneObject>) => void;
+  obj: SceneObject;
+}) {
+  const pivotMode = useStore((state) => state.pivotMode);
+  const isDragging = useRef(false);
+  const safetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [tc, setTc] = useState<any>(null);
+
+  // Calculate pivot offset based on mode
+  const pivotOffset = useMemo(() => {
+    if (pivotMode === 'base') return [0, 0, 0] as [number, number, number];
+
+    // Center pivot: shift gizmo up by half the object height
+    if (obj.geometry === 'box') return [0, 0, 0] as [number, number, number]; // box is already centered
+    if (obj.geometry === 'sphere') return [0, 0, 0] as [number, number, number]; // sphere already centered
+    if (obj.geometry === 'cylinder') return [0, 0, 0] as [number, number, number];
+    if (obj.geometry === 'cone') return [0, 0, 0] as [number, number, number];
+    if (obj.geometry === 'torus') return [0, 0, 0] as [number, number, number];
+    if (obj.geometry === 'torusKnot') return [0, 0, 0] as [number, number, number];
+
+    // For GLTF models, compute bounding box center offset dynamically
+    if (obj.type === 'gltf' || (obj.type as string) === 'fbx') {
+      // The offset is applied by computing the bounding box in useEffect below
+      return [0, 0, 0] as [number, number, number];
+    }
+
+    return [0, 0, 0] as [number, number, number];
+  }, [pivotMode, obj.geometry, obj.type]);
+
+  // Robust release function
+  const releaseGrasp = useCallback(() => {
+    if (!isDragging.current) return;
+    isDragging.current = false;
+
+    if (safetyTimer.current) {
+      clearTimeout(safetyTimer.current);
+      safetyTimer.current = null;
+    }
+
+    setOrbitEnabled(true);
+    document.body.style.cursor = '';
+    // Reset gizmo focus on release so selection guard is cleared
+    useStore.getState().setGizmoFocused(false);
+
+    if (objRef.current) {
+      const o = objRef.current;
+      updateObject(objId, {
+        position: [o.position.x, o.position.y, o.position.z],
+        rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
+        scale: [o.scale.x, o.scale.y, o.scale.z],
+      });
+    }
+  }, [objRef, objId, updateObject, setOrbitEnabled]);
+
+  // Global safety listeners to catch missed releases
+  useEffect(() => {
+    const onGlobalPointerUp = () => {
+      if (isDragging.current) releaseGrasp();
+      // Always clear gizmoFocused on any pointer release as a safety net
+      useStore.getState().setGizmoFocused(false);
+    };
+
+    const onBlurOrHidden = () => {
+      if (isDragging.current) releaseGrasp();
+      useStore.getState().setGizmoFocused(false);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.hidden && isDragging.current) releaseGrasp();
+    };
+
+    window.addEventListener('pointerup', onGlobalPointerUp);
+    window.addEventListener('blur', onBlurOrHidden);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pointerup', onGlobalPointerUp);
+      window.removeEventListener('blur', onBlurOrHidden);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      // Ensure clean state on unmount
+      if (isDragging.current) {
+        isDragging.current = false;
+        setOrbitEnabled(true);
+        document.body.style.cursor = '';
+      }
+      // Always clear gizmoFocused on unmount to prevent stuck block
+      useStore.getState().setGizmoFocused(false);
+      if (safetyTimer.current) {
+        clearTimeout(safetyTimer.current);
+        safetyTimer.current = null;
+      }
+    };
+  }, [releaseGrasp, setOrbitEnabled]);
+
+  // Gizmo handle hover detection using three.js TransformControls' internal `axis` property.
+  // `tc.axis` is non-null ONLY when the pointer is directly over a gizmo handle (e.g. "X", "Y", "XY").
+  // This replaces the old pointerenter/pointerleave approach which operated on the domElement
+  // (which covers the entire canvas, not just the handles).
+  useEffect(() => {
+    if (!tc) return;
+
+    const domEl = tc.domElement || tc.el;
+    if (!domEl) return;
+
+    // On every pointermove, sync tc.axis to gizmoFocused in the store.
+    // This ensures the guard state is always accurate before any click.
+    const onPointerMove = () => {
+      if (isDragging.current) return; // Don't change during active drag
+      const isOverHandle = (tc as any).axis !== null;
+      const state = useStore.getState();
+      if (isOverHandle !== state.gizmoFocused) {
+        state.setGizmoFocused(isOverHandle);
+      }
+      // Cursor feedback
+      document.body.style.cursor = isOverHandle ? 'grab' : '';
+    };
+
+    // Capture-phase pointerdown: fires BEFORE R3F's bubble-phase raycaster.
+    // Sets gizmoFocused synchronously so that R3F's event filter (on Canvas)
+    // can reject all raycast hits for this event. We do NOT call
+    // stopImmediatePropagation() because TransformControls' own handler
+    // also listens on the same element and must still receive the event
+    // to start the drag operation.
+    const onPointerDown = () => {
+      const axis = (tc as any).axis;
+      console.log(`[GizmoWrapper] capture-phase pointerdown — tc.axis=${axis}, gizmoFocused=${useStore.getState().gizmoFocused}`);
+      if (axis !== null) {
+        useStore.getState().setGizmoFocused(true);
+        console.log(`[GizmoWrapper] SET gizmoFocused=true (axis=${axis})`);
+      }
+    };
+
+    domEl.addEventListener('pointermove', onPointerMove);
+    domEl.addEventListener('pointerdown', onPointerDown, true); // capture phase
+
+    return () => {
+      domEl.removeEventListener('pointermove', onPointerMove);
+      domEl.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [tc]);
+
+  return (
+    <TransformControls
+      ref={setTc}
+      object={objRef}
+      mode={transformMode}
+      size={1.35}
+      translationSnap={snapGrid ? snapValue : null}
+      rotationSnap={snapGrid ? Math.PI / 8 : null}
+      scaleSnap={snapGrid ? 0.5 : null}
+      onMouseDown={() => {
+        isDragging.current = true;
+        setOrbitEnabled(false);
+        document.body.style.cursor = 'grabbing';
+
+        // Safety timeout: auto-release after 150ms of no dragging-end event
+        if (safetyTimer.current) clearTimeout(safetyTimer.current);
+        safetyTimer.current = setTimeout(() => {
+          // Only fire if still dragging (event was missed)
+          // We don't auto-release during active drag, instead reset on next pointerup
+        }, 150);
+      }}
+      onMouseUp={() => {
+        releaseGrasp();
+      }}
+      onChange={() => {
+        // Reset safety timer on each change (proves drag is active)
+        if (safetyTimer.current) {
+          clearTimeout(safetyTimer.current);
+          safetyTimer.current = null;
+        }
+        if (objRef.current) {
+          const o = objRef.current;
+          updateObject(objId, {
+            position: [o.position.x, o.position.y, o.position.z],
+            rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
+            scale: [o.scale.x, o.scale.y, o.scale.z],
+          });
+        }
+      }}
+    />
+  );
+}
+
+function playProceduralFootstep() {
+  try {
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    const bufferSize = ctx.sampleRate * 0.08;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 250;
+    filter.Q.value = 3.0;
+    
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+    
+    noise.start();
+    
+    osc.frequency.setValueAtTime(80, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(30, ctx.currentTime + 0.05);
+    
+    const oscGain = ctx.createGain();
+    oscGain.gain.setValueAtTime(0.05, ctx.currentTime);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+    
+    osc.connect(oscGain);
+    oscGain.connect(ctx.destination);
+    
+    osc.start();
+    osc.stop(ctx.currentTime + 0.06);
+    noise.stop(ctx.currentTime + 0.09);
+  } catch (e) {
+    console.warn('[Audio] Failed to play procedural footstep:', e);
+  }
+}
+
+function playProceduralLanding() {
+  try {
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    const bufferSize = ctx.sampleRate * 0.18;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 180;
+    
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+    
+    noise.start();
+    
+    osc.frequency.setValueAtTime(60, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(20, ctx.currentTime + 0.12);
+    
+    const oscGain = ctx.createGain();
+    oscGain.gain.setValueAtTime(0.2, ctx.currentTime);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+    
+    osc.connect(oscGain);
+    oscGain.connect(ctx.destination);
+    
+    osc.start();
+    osc.stop(ctx.currentTime + 0.13);
+    noise.stop(ctx.currentTime + 0.19);
+  } catch (e) {
+    console.warn('[Audio] Failed to play procedural landing:', e);
+  }
+}
+
+function playLandingSound(url: string) {
+  if (!url || url === '/sounds/footstep.wav') {
+    playProceduralLanding();
+    return;
+  }
+  try {
+    const audio = new Audio(url);
+    audio.volume = 0.45;
+    audio.play().catch(err => {
+      console.warn('[Audio] Play landing sound file failed, falling back:', err);
+      playProceduralLanding();
+    });
+  } catch (e) {
+    console.warn('[Audio] Landing sound error, falling back:', e);
+    playProceduralLanding();
+  }
+}
+
 function PlayerController() {
   const { camera } = useThree();
   const velocity = useRef(new THREE.Vector3());
   const direction = useRef(new THREE.Vector3());
-  const keys = useRef({ w: false, a: false, s: false, d: false, space: false, shift: false });
+  const keys = useRef({ w: false, a: false, s: false, d: false, space: false, shift: false, c: false, q: false });
+  const lastSpacePressed = useRef(false);
+  const jumpCooldown = useRef(0);
+  const jumpCount = useRef(0);
   const [locked, setLocked] = useState(false);
   const isPlaying = useStore((state) => state.isPlaying);
+  const objects = useStore((state) => state.objects);
+  const environment = useStore((state) => state.environment);
+  const playerObj = useMemo(() => objects.find((o) => o.id === 'obj_player'), [objects]);
+  const characterActions = useMemo(() => playerObj?.characterActions ?? {
+    autoJump: false,
+    doubleJump: false,
+    sprintEnabled: true,
+    crouchEnabled: false,
+    dashEnabled: false,
+    dashDistance: 5.0,
+    dashCooldown: 1.0,
+    autoClimb: false,
+    footstepAudioEnabled: false,
+    footstepAudioUrl: '/sounds/footstep.wav',
+  }, [playerObj?.characterActions]);
+  const { rapier, world } = useRapier();
 
   const handleLock = React.useCallback(() => setLocked(true), []);
-  const handleUnlock = React.useCallback(() => setLocked(false), []);
+  const handleUnlock = React.useCallback(() => {
+    setLocked(false);
+    if (useStore.getState().isPlaying) {
+      useStore.getState().setPaused(true);
+    }
+  }, []);
+
+  const isPaused = useStore((state) => state.isPaused);
+
+  // Keep refs for dash state
+  const dashTimeLeft = useRef(0);
+  const dashDirection = useRef(new THREE.Vector3());
+  const dashCooldownRemaining = useRef(0);
+  const lastQPressed = useRef(false);
+
+  // Keep refs for climb state
+  const isClimbing = useRef(false);
+  const climbTimer = useRef(0);
+
+  // Keep refs for audio state
+  const wasGrounded = useRef(true);
+  const footstepTimer = useRef(0);
+
+  useEffect(() => {
+    if (isPaused) {
+      keys.current = { w: false, a: false, s: false, d: false, space: false, shift: false, c: false, q: false };
+    }
+  }, [isPaused]);
 
   useEffect(() => {
     if (!isPlaying && document.pointerLockElement) {
@@ -894,14 +1607,25 @@ function PlayerController() {
     if (camera.position.y < 1) camera.position.y = 1.6;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (useStore.getState().isPaused) return;
       const key = e.key.toLowerCase();
-      if (key in keys.current) keys.current[key as keyof typeof keys.current] = true;
+      if (key === 'w') keys.current.w = true;
+      if (key === 'a') keys.current.a = true;
+      if (key === 's') keys.current.s = true;
+      if (key === 'd') keys.current.d = true;
+      if (key === 'c') keys.current.c = true;
+      if (key === 'q') keys.current.q = true;
       if (e.code === 'Space') keys.current.space = true;
       if (e.key === 'Shift') keys.current.shift = true;
     };
     const handleKeyUp = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      if (key in keys.current) keys.current[key as keyof typeof keys.current] = false;
+      if (key === 'w') keys.current.w = false;
+      if (key === 'a') keys.current.a = false;
+      if (key === 's') keys.current.s = false;
+      if (key === 'd') keys.current.d = false;
+      if (key === 'c') keys.current.c = false;
+      if (key === 'q') keys.current.q = false;
       if (e.code === 'Space') keys.current.space = false;
       if (e.key === 'Shift') keys.current.shift = false;
     };
@@ -915,34 +1639,418 @@ function PlayerController() {
   }, [camera]);
 
   useFrame((_, delta) => {
-    if (!locked) return;
+    if (isPaused) return;
+    if (playerRigidBodyRef && typeof playerRigidBodyRef.isValid === 'function' && playerRigidBodyRef.isValid()) {
+      if (jumpCooldown.current > 0) {
+        jumpCooldown.current -= delta;
+      }
+      if (dashCooldownRemaining.current > 0) {
+        dashCooldownRemaining.current -= delta;
+      }
+      if (climbTimer.current > 0) {
+        climbTimer.current -= delta;
+      }
 
-    // Safety cap on delta for tab switching
-    const d = Math.min(delta, 0.1);
+      // 1. Get player position from physics engine
+      let translation = playerRigidBodyRef.translation();
 
-    const speed = keys.current.shift ? 25.0 : 15.0;
-    const mass = 5.0;
+      // Check if player fell off the map (Y threshold)
+      if (translation.y < -20) {
+        const spawnPos = playerObj?.position || [-2, 1, 0];
+        playerRigidBodyRef.setTranslation({ x: spawnPos[0], y: spawnPos[1], z: spawnPos[2] }, true);
+        playerRigidBodyRef.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        translation = playerRigidBodyRef.translation(); // Get updated position
+      }
 
-    velocity.current.x -= velocity.current.x * 10.0 * d;
-    velocity.current.z -= velocity.current.z * 10.0 * d;
-    velocity.current.y -= 9.8 * mass * d;
+      const playerPos = new THREE.Vector3(translation.x, translation.y, translation.z);
 
-    direction.current.z = Number(keys.current.w) - Number(keys.current.s);
-    direction.current.x = Number(keys.current.d) - Number(keys.current.a);
-    direction.current.normalize();
+      // --- DETECT IF PLAYER IS IN WATER ---
+      let isInWater = false;
+      let waterSurfaceY = -999;
 
-    if (keys.current.w || keys.current.s) velocity.current.z -= direction.current.z * speed * d;
-    if (keys.current.a || keys.current.d) velocity.current.x += direction.current.x * speed * d;
+      const waterObjects = objects.filter((o) => {
+        if (o.id === 'obj_player') return false;
+        return o.material && (
+          o.material.map === 'water' ||
+          o.material.normalMap === 'water' ||
+          (o.material.map && o.material.map.includes('waternormals.jpg')) ||
+          (o.material.normalMap && o.material.normalMap.includes('waternormals.jpg'))
+        );
+      });
 
-    camera.translateX(velocity.current.x * d);
-    camera.translateZ(velocity.current.z * d);
-    camera.position.y += velocity.current.y * d;
+      for (const water of waterObjects) {
+        const halfScaleX = water.scale[0] * 0.5;
+        const halfScaleZ = water.scale[2] * 0.5;
+        const isWaterPlane = water.geometry === 'plane';
+        
+        const wx = water.position[0];
+        const wy = water.position[1];
+        const wz = water.position[2];
+        
+        const px = playerPos.x;
+        const py = playerPos.y;
+        const pz = playerPos.z;
+        
+        if (isWaterPlane) {
+          const dx = Math.abs(px - wx);
+          const dz = Math.abs(pz - wz);
+          if (dx <= halfScaleX && dz <= halfScaleZ) {
+            if (py <= wy + 0.5) {
+              isInWater = true;
+              waterSurfaceY = Math.max(waterSurfaceY, wy);
+            }
+          }
+        } else {
+          const halfScaleY = water.scale[1] * 0.5;
+          const dx = Math.abs(px - wx);
+          const dy = Math.abs(py - wy);
+          const dz = Math.abs(pz - wz);
+          
+          if (dx <= halfScaleX && dy <= halfScaleY + 0.8 && dz <= halfScaleZ) {
+            isInWater = true;
+            waterSurfaceY = Math.max(waterSurfaceY, wy + halfScaleY);
+          }
+        }
+      }
 
-    if (camera.position.y < 1.6) {
-      velocity.current.y = 0;
-      camera.position.y = 1.6;
-      if (keys.current.space) {
-        velocity.current.y = 15;
+      // 2. Camera follow math (third-person mode)
+      const distance = 5.0; // Distance behind player
+      const heightOffset = 1.5; // Look height offset above player origin
+      
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      
+      const target = playerPos.clone();
+      target.y += heightOffset;
+      
+      camera.position.copy(target).sub(forward.clone().multiplyScalar(distance));
+      camera.position.y = Math.max(translation.y + 0.2, camera.position.y);
+
+      // 3. Movement controls (only when pointer is locked)
+      if (locked) {
+        // Project camera forward and right vectors onto horizontal XZ plane
+        const camForward = new THREE.Vector3();
+        camera.getWorldDirection(camForward);
+        camForward.y = 0;
+        if (camForward.lengthSq() < 0.0001) {
+          const localUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+          camForward.copy(localUp);
+          camForward.y = 0;
+          if (camForward.lengthSq() < 0.0001) {
+            camForward.set(0, 0, -1);
+          }
+        }
+        camForward.normalize();
+
+        const camRight = new THREE.Vector3();
+        camRight.crossVectors(camForward, camera.up).normalize();
+
+        // Calculate horizontal movement vector based on WASD keys
+        const moveDir = new THREE.Vector3();
+        if (keys.current.w) moveDir.add(camForward);
+        if (keys.current.s) moveDir.sub(camForward);
+        if (keys.current.d) moveDir.add(camRight);
+        if (keys.current.a) moveDir.sub(camRight);
+
+        if (moveDir.lengthSq() > 0) {
+          moveDir.normalize();
+        }
+
+        // --- DASH LOGIC ---
+        const dashEnabled = characterActions.dashEnabled;
+        const dashDistance = characterActions.dashDistance ?? 5.0;
+        const dashCooldown = characterActions.dashCooldown ?? 1.0;
+        const qPressed = keys.current.q;
+        const qNewlyPressed = qPressed && !lastQPressed.current;
+        lastQPressed.current = qPressed;
+
+        if (dashEnabled && qNewlyPressed && dashCooldownRemaining.current <= 0 && dashTimeLeft.current <= 0 && !isClimbing.current) {
+          dashTimeLeft.current = 0.15; // 150ms dash duration
+          dashCooldownRemaining.current = dashCooldown;
+          if (moveDir.lengthSq() > 0) {
+            dashDirection.current.copy(moveDir).normalize();
+          } else {
+            dashDirection.current.copy(camForward).normalize();
+          }
+        }
+
+        // --- GROUNDED RAYCAST ---
+        let isGrounded = false;
+        if (world && rapier) {
+          const origin = { x: translation.x, y: translation.y - 0.85, z: translation.z };
+          const ray = new rapier.Ray(origin, { x: 0, y: -1, z: 0 });
+          const maxToi = 0.25;
+          const hit = world.castRay(
+            ray,
+            maxToi,
+            true,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            (collider) => {
+              const parent = collider.parent();
+              return !parent || parent.handle !== playerRigidBodyRef.handle;
+            }
+          );
+          isGrounded = hit !== null && playerRigidBodyRef.linvel().y <= 0.1;
+        } else {
+          isGrounded = Math.abs(playerRigidBodyRef.linvel().y) < 0.1;
+        }
+
+        if (isGrounded) {
+          jumpCount.current = 0;
+        }
+
+        // --- LANDING AND FOOTSTEP AUDIO TRIGGER ---
+        const landed = isGrounded && !wasGrounded.current;
+        wasGrounded.current = isGrounded;
+
+        if (landed && characterActions.footstepAudioEnabled) {
+          playLandingSound(characterActions.footstepAudioUrl || '/sounds/footstep.wav');
+        }
+
+        if (isGrounded && moveDir.lengthSq() > 0 && characterActions.footstepAudioEnabled && dashTimeLeft.current <= 0 && !isClimbing.current) {
+          const stepInterval = keys.current.shift ? 0.28 : 0.38;
+          footstepTimer.current += delta;
+          if (footstepTimer.current >= stepInterval) {
+            footstepTimer.current = 0;
+            playProceduralFootstep();
+          }
+        } else {
+          footstepTimer.current = 0;
+        }
+
+        // --- AUTO-CLIMB DETECTION ---
+        let isClimbingThisFrame = false;
+        if (characterActions.autoClimb && world && rapier && moveDir.lengthSq() > 0 && dashTimeLeft.current <= 0) {
+          const forwardOrigin = { x: translation.x, y: translation.y - 0.2, z: translation.z };
+          const forwardDir = { x: moveDir.x, y: 0, z: moveDir.z };
+          const forwardRay = new rapier.Ray(forwardOrigin, forwardDir);
+          
+          const forwardHit = world.castRay(
+            forwardRay,
+            0.65,
+            true,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            (collider) => {
+              const parent = collider.parent();
+              return !parent || parent.handle !== playerRigidBodyRef.handle;
+            }
+          );
+
+          if (forwardHit !== null) {
+            const hitDistance = forwardHit.timeOfImpact;
+            const hitPointX = translation.x + forwardDir.x * hitDistance;
+            const hitPointZ = translation.z + forwardDir.z * hitDistance;
+            
+            const upOrigin = {
+              x: hitPointX + forwardDir.x * 0.05,
+              y: translation.y,
+              z: hitPointZ + forwardDir.z * 0.05
+            };
+            const upRay = new rapier.Ray(upOrigin, { x: 0, y: 1, z: 0 });
+            const upHit = world.castRay(
+              upRay,
+              1.6,
+              true,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              (collider) => {
+                const parent = collider.parent();
+                return !parent || parent.handle !== playerRigidBodyRef.handle;
+              }
+            );
+
+            if (upHit === null) {
+              isClimbingThisFrame = true;
+            }
+          }
+        }
+
+        if (isClimbingThisFrame) {
+          if (!isClimbing.current) {
+            isClimbing.current = true;
+            climbTimer.current = 0.8;
+          }
+        } else if (climbTimer.current <= 0) {
+          isClimbing.current = false;
+        }
+
+        // --- VELOCITY DETERMINATION ---
+        let targetVelX = 0;
+        let targetVelY = playerRigidBodyRef.linvel().y;
+        let targetVelZ = 0;
+
+        if (dashTimeLeft.current > 0) {
+          dashTimeLeft.current -= delta;
+          const dashSpeed = dashDistance / 0.15;
+          targetVelX = dashDirection.current.x * dashSpeed;
+          targetVelZ = dashDirection.current.z * dashSpeed;
+          targetVelY = 0;
+        } else if (isClimbing.current) {
+          targetVelY = 3.5;
+          targetVelX = moveDir.x * 1.5;
+          targetVelZ = moveDir.z * 1.5;
+        } else {
+          const speed = isInWater
+            ? 3.0
+            : (characterActions.sprintEnabled && keys.current.shift)
+              ? 10.0
+              : (characterActions.crouchEnabled && keys.current.c)
+                ? 2.5
+                : 5.0;
+          targetVelX = moveDir.x * speed;
+          targetVelZ = moveDir.z * speed;
+
+          if (moveDir.lengthSq() > 0) {
+            const angle = Math.atan2(moveDir.x, moveDir.z) + Math.PI;
+            const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+            playerRigidBodyRef.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+          }
+
+          const spacePressedThisFrame = keys.current.space;
+          const spaceNewlyPressed = spacePressedThisFrame && !lastSpacePressed.current;
+          lastSpacePressed.current = spacePressedThisFrame;
+
+          if (isInWater) {
+            const targetSurfaceY = waterSurfaceY - 0.4;
+            if (keys.current.space) {
+              targetVelY = 3.0; // Swim up
+            } else if (playerPos.y < targetSurfaceY) {
+              // Float up to surface
+              const floatForce = (targetSurfaceY - playerPos.y) * 4.0;
+              targetVelY = Math.min(2.0, targetVelY + floatForce * delta * 8.0);
+            } else {
+              // Sinking damping
+              if (targetVelY < -1.0) targetVelY = -1.0;
+            }
+          } else {
+            if (characterActions.autoJump && isGrounded && moveDir.lengthSq() > 0 && jumpCooldown.current <= 0) {
+              if (world && rapier) {
+                const kneeOrigin = { x: translation.x, y: translation.y - 0.6, z: translation.z };
+                const rayDir = { x: moveDir.x, y: 0, z: moveDir.z };
+                const kneeRay = new rapier.Ray(kneeOrigin, rayDir);
+                
+                const kneeHit = world.castRay(
+                  kneeRay,
+                  0.6,
+                  true,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  (collider) => {
+                    const parent = collider.parent();
+                    return !parent || parent.handle !== playerRigidBodyRef.handle;
+                  }
+                );
+
+                if (kneeHit !== null) {
+                  const obstacleDistance = kneeHit.timeOfImpact;
+                  const hipOrigin = { x: translation.x, y: translation.y - 0.35, z: translation.z };
+                  const hipRay = new rapier.Ray(hipOrigin, rayDir);
+                  const hipHit = world.castRay(
+                    hipRay,
+                    obstacleDistance + 0.05,
+                    true,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    (collider) => {
+                      const parent = collider.parent();
+                      return !parent || parent.handle !== playerRigidBodyRef.handle;
+                    }
+                  );
+
+                  if (hipHit === null) {
+                    targetVelY = 5.0;
+                    jumpCooldown.current = 0.2;
+                    jumpCount.current = 1;
+                  }
+                }
+              }
+            }
+
+            if (spaceNewlyPressed && jumpCooldown.current <= 0) {
+              if (isGrounded) {
+                targetVelY = 7.0;
+                jumpCooldown.current = 0.2;
+                jumpCount.current = 1;
+              } else if (characterActions.doubleJump && jumpCount.current === 1) {
+                targetVelY = 6.0;
+                jumpCooldown.current = 0.2;
+                jumpCount.current = 2;
+              }
+            }
+          }
+        }
+
+        playerRigidBodyRef.setLinvel({
+          x: targetVelX,
+          y: targetVelY,
+          z: targetVelZ
+        }, true);
+
+        // --- ANIMATION STATE SYNCHRONIZATION ---
+        let nextAnimState: 'idle' | 'walk' | 'sprint' | 'jump' | 'dash' | 'climb' = 'idle';
+        if (isClimbing.current) {
+          nextAnimState = 'climb';
+        } else if (dashTimeLeft.current > 0) {
+          nextAnimState = 'dash';
+        } else if (isInWater) {
+          nextAnimState = 'walk'; // Fallback swimming animation
+        } else if (!isGrounded) {
+          nextAnimState = 'jump';
+        } else if (moveDir.lengthSq() > 0) {
+          nextAnimState = (characterActions.sprintEnabled && keys.current.shift) ? 'sprint' : 'walk';
+        } else {
+          nextAnimState = 'idle';
+        }
+        useStore.getState().setPlayerAnimationState(nextAnimState);
+
+      } else {
+        const currentVel = playerRigidBodyRef.linvel();
+        playerRigidBodyRef.setLinvel({
+          x: 0,
+          y: currentVel.y,
+          z: 0
+        }, true);
+        useStore.getState().setPlayerAnimationState('idle');
+      }
+    } else {
+      if (!locked) return;
+      const d = Math.min(delta, 0.1);
+      const speed = keys.current.shift ? 25.0 : 15.0;
+      const mass = 5.0;
+
+      velocity.current.x -= velocity.current.x * 10.0 * d;
+      velocity.current.z -= velocity.current.z * 10.0 * d;
+      velocity.current.y += (environment.gravity ?? -9.81) * mass * d;
+
+      direction.current.z = Number(keys.current.w) - Number(keys.current.s);
+      direction.current.x = Number(keys.current.d) - Number(keys.current.a);
+      direction.current.normalize();
+
+      if (keys.current.w || keys.current.s) velocity.current.z -= direction.current.z * speed * d;
+      if (keys.current.a || keys.current.d) velocity.current.x += direction.current.x * speed * d;
+
+      camera.translateX(velocity.current.x * d);
+      camera.translateZ(velocity.current.z * d);
+      camera.position.y += velocity.current.y * d;
+
+      if (camera.position.y < 1.6) {
+        velocity.current.y = 0;
+        camera.position.y = 1.6;
+        if (keys.current.space) {
+          velocity.current.y = 15;
+        }
       }
     }
   });
@@ -1162,9 +2270,11 @@ function ExportHelper() {
 }
 
 export default function Viewport() {
-  const { objects, selectedIds, selectObject, environment, addObject, isPlaying, showGrid, sidebarVisible, bottomPanelVisible, inspectorVisible, toggleSidebar, toggleBottomPanel, toggleInspector } = useStore();
+  const { objects, selectedIds, selectObject, environment, addObject, isPlaying, isPaused, togglePause, setPaused, showGrid, sidebarVisible, bottomPanelVisible, inspectorVisible, toggleSidebar, toggleBottomPanel, toggleInspector } = useStore();
   const showOverlays = useStore((state) => state.showOverlays);
   const showPhysicsDebug = useStore((state) => state.showPhysicsDebug);
+  const isPickingAsset = useStore((state) => state.isPickingAsset);
+  const activePickerTarget = useStore((state) => state.activePickerTarget);
 
   const sunObj = objects.find((o) => o.id === 'obj_sun');
   const sunPosition = sunObj ? sunObj.position : [10, 20, 10];
@@ -1178,8 +2288,17 @@ export default function Viewport() {
         useStore.getState().toggleOverlays();
       }
       if (e.key.toLowerCase() === 'p') {
+        // If in play mode, 'p' toggles pause instead of toggling active tool
+        if (useStore.getState().isPlaying) {
+          e.preventDefault();
+          useStore.getState().togglePause();
+          return;
+        }
         const current = useStore.getState().activeTool;
         useStore.getState().setActiveTool(current === 'foliage' ? 'select' : 'foliage');
+      }
+      if (e.key === 'Escape' && useStore.getState().isPlaying) {
+        useStore.getState().setPaused(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -1230,6 +2349,18 @@ export default function Viewport() {
     if (assetData) {
       try {
         const asset = JSON.parse(assetData);
+        const selectedId = selectedIds[0] || null;
+        const selectedObj = objects.find((o) => o.id === selectedId);
+        // Never auto-insert into the starter_player system folder
+        let parentId: string | null = null;
+        if (selectedObj) {
+          if (selectedObj.type === 'group' && selectedObj.id !== 'starter_player') {
+            parentId = selectedObj.id;
+          } else if (selectedObj.parentId && selectedObj.parentId !== 'starter_player') {
+            parentId = selectedObj.parentId;
+          }
+        }
+
         if (asset.type === 'model' || asset.type === 'scene') {
           if (asset.url) {
             addObject({
@@ -1240,6 +2371,7 @@ export default function Viewport() {
               position: [0, 0, 0],
               rotation: [0, 0, 0],
               scale: [1, 1, 1],
+              parentId: parentId,
             });
           } else {
             addObject({
@@ -1251,6 +2383,7 @@ export default function Viewport() {
               rotation: [0, 0, 0],
               scale: [1, 1, 1],
               material: { color: '#ffffff', roughness: 0.5, metalness: 0, envMapIntensity: 1 },
+              parentId: parentId,
             });
           }
         } else if (asset.type === 'material') {
@@ -1263,6 +2396,7 @@ export default function Viewport() {
             rotation: [0, 0, 0],
             scale: [1, 1, 1],
             material: { color: '#888888', roughness: 0.2, metalness: 0.8, envMapIntensity: 1 }, // Shiny metal-like for material test
+            parentId: parentId,
           });
         }
       } catch (error) {
@@ -1279,6 +2413,21 @@ export default function Viewport() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {isPickingAsset && (
+        <div className="absolute inset-0 bg-neutral-950/45 backdrop-blur-[1px] z-[45] flex flex-col items-center justify-center pointer-events-none select-none">
+          <div className="bg-bg-panel/95 backdrop-blur-md border border-accent/40 px-5 py-3.5 rounded-2xl shadow-2xl flex flex-col items-center gap-2 max-w-sm text-center animate-in fade-in zoom-in-95 duration-200">
+            <span className="text-xl animate-bounce">📂</span>
+            <span className="text-white text-xs font-bold tracking-wide">Asset Picker Active</span>
+            <span className="text-[10px] text-text-secondary leading-normal">
+              {activePickerTarget === 'materialMap'
+                ? 'Select an image/texture asset from the Content Browser below to apply it as the Color/Base Map.'
+                : activePickerTarget === 'materialNormalMap'
+                ? 'Select an image/texture asset from the Content Browser below to apply it as the Normal Map.'
+                : 'Select an asset from the Content Browser below to link it to the properties.'}
+            </span>
+          </div>
+        </div>
+      )}
       {isDragging && (
         <div className="absolute inset-0 bg-accent/20 border-2 border-accent border-dashed z-50 flex items-center justify-center pointer-events-none">
           <div className="bg-bg-panel px-6 py-4 rounded-lg shadow-xl flex flex-col items-center gap-3">
@@ -1290,6 +2439,20 @@ export default function Viewport() {
       <Canvas
         shadows={{ type: THREE.PCFShadowMap }}
         camera={{ position: [5, 5, 5], fov: 50 }}
+        events={(state) => ({
+          ...events(state),
+          // Gizmo occlusion fix: when a gizmo handle is focused, drop ALL
+          // raycast intersections so R3F never dispatches pointer events to
+          // scene objects behind the gizmo. This is the definitive fix because
+          // it operates at the raycaster result level, before any onPointerDown
+          // handlers fire on scene objects.
+          filter: (items: THREE.Intersection[], s: any) => {
+            if (useStore.getState().gizmoFocused) {
+              return []; // Block all scene object interactions
+            }
+            return items;
+          },
+        })}
         onCreated={({ gl }) => {
           // Patch WebGLRenderer's getContextAttributes
           const originalRendererGetContextAttributes = gl.getContextAttributes.bind(gl);
@@ -1324,7 +2487,11 @@ export default function Viewport() {
             };
           }
         }}
-        onPointerMissed={() => selectObject(null)}
+        onPointerMissed={() => {
+          // Don't deselect if gizmo is being interacted with
+          if (useStore.getState().gizmoFocused) return;
+          selectObject(null);
+        }}
         onPointerDown={(e) => {
           if (e.button === 2) {
             // Right click
@@ -1357,7 +2524,7 @@ export default function Viewport() {
           <Suspense fallback={null}>
             <DayNightCycle />
 
-            <Physics paused={!isPlaying} debug={showPhysicsDebug}>
+            <Physics paused={!isPlaying || isPaused} debug={showPhysicsDebug} gravity={[0, environment.gravity ?? -9.81, 0]}>
               <group name="export_scene">
                 {rootObjects.map((obj) => (
                   <SceneNode
@@ -1369,6 +2536,7 @@ export default function Viewport() {
                   />
                 ))}
               </group>
+              {isPlaying && <PlayerController />}
             </Physics>
 
             {showGrid && (!isPlaying || objects.length === 0) && (
@@ -1395,18 +2563,17 @@ export default function Viewport() {
         <FoliageRenderer />
         <FoliagePainterController />
 
+
         {!isPlaying && <CameraController orbitRef={orbitRef} />}
 
-        {isPlaying ? (
-          <PlayerController />
-        ) : (
+        {!isPlaying && (
           <OrbitControls
             ref={orbitRef}
             enabled={orbitEnabled}
             makeDefault
             target={[0, 0, 0]}
             mouseButtons={{
-              LEFT: THREE.MOUSE.NONE,
+              LEFT: -1 as unknown as THREE.MOUSE,
               MIDDLE: THREE.MOUSE.PAN,
               RIGHT: THREE.MOUSE.ROTATE,
             }}
@@ -1454,7 +2621,7 @@ export default function Viewport() {
         </div>
       )}
 
-      {isPlaying && (
+      {isPlaying && !isPaused && (
         <>
           <div className="absolute top-6 left-1/2 transform -translate-x-1/2 pointer-events-none text-center z-10 font-mono select-none drop-shadow-lg">
             <div className="text-emerald-400 text-sm font-bold tracking-widest bg-emerald-950/60 px-4 py-1.5 rounded-full backdrop-blur-md border border-emerald-500/30">
@@ -1469,6 +2636,46 @@ export default function Viewport() {
             <div className="w-1 h-1 bg-white/80 rounded-full"></div>
           </div>
         </>
+      )}
+
+      {/* Visually striking glassmorphic Pause Overlay */}
+      {isPlaying && isPaused && (
+        <div
+          onClick={() => useStore.getState().setPaused(false)}
+          className="absolute inset-0 bg-neutral-950/60 backdrop-blur-md flex items-center justify-center z-40 select-none animate-in fade-in duration-300 cursor-pointer"
+        >
+          <div className="bg-bg-panel/40 backdrop-blur-xl border border-white/10 p-8 rounded-2xl flex flex-col items-center gap-6 shadow-2xl max-w-sm text-center transform scale-100 hover:scale-[1.02] transition-transform duration-300 relative overflow-hidden group">
+            {/* Ambient inner glow */}
+            <div className="absolute -top-10 -left-10 w-32 h-32 bg-amber-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-amber-500/20 transition-colors duration-500" />
+            <div className="absolute -bottom-10 -right-10 w-32 h-32 bg-sky-500/10 rounded-full blur-2xl pointer-events-none group-hover:bg-sky-500/20 transition-colors duration-500" />
+
+            <div className="flex items-center justify-center w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 shadow-[0_0_20px_rgba(245,158,11,0.15)] animate-pulse">
+              <Pause size={24} className="text-amber-400" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <h2 className="text-white text-lg font-bold tracking-widest uppercase">Simulation Paused</h2>
+              <p className="text-text-secondary text-[11px] font-mono leading-relaxed">
+                Physics engine, animation updates, and scripting execution are frozen.
+              </p>
+            </div>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                useStore.getState().setPaused(false);
+              }}
+              className="w-full bg-amber-500 hover:bg-amber-400 text-neutral-950 font-semibold py-2 px-6 rounded-lg text-xs transition-all duration-150 shadow-md hover:shadow-lg active:scale-95 cursor-pointer flex items-center justify-center gap-1.5 border-none"
+            >
+              <Play size={12} className="fill-current" />
+              <span>Resume Simulation</span>
+            </button>
+
+            <div className="text-[10px] text-text-secondary/60 font-mono">
+              Press <span className="bg-neutral-900 border border-neutral-800 px-1 py-0.5 rounded text-white font-sans font-bold">P</span> to resume • Click anywhere
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="absolute bottom-4 right-4 pointer-events-none">
@@ -1602,6 +2809,8 @@ function IndividualCloud({
   const groupRef = useRef<THREE.Group>(null);
 
   useFrame((_, delta) => {
+    const isPaused = useStore.getState().isPaused;
+    if (isPaused) return;
     if (groupRef.current && environment.cloudsEnabled) {
       // Wind Vector Calculation
       const angle = environment.windEnabled ? getWindAngle(environment.windDirection) : 0.0;
@@ -1712,6 +2921,8 @@ function CirrusClouds({ currentHour }: { currentHour: number }) {
   const timeRef = useRef(0);
 
   useFrame((_, delta) => {
+    const isPaused = useStore.getState().isPaused;
+    if (isPaused) return;
     if (materialRef.current && environment.cloudsEnabled) {
       const speed = environment.windEnabled ? (environment.windStrength || 2.0) * 0.2 : environment.cloudsSpeed * 0.4;
       timeRef.current += delta * speed;
@@ -2037,6 +3248,8 @@ function NimbusCirrusClouds() {
   const timeRef = useRef(0);
 
   useFrame((_, delta) => {
+    const isPaused = useStore.getState().isPaused;
+    if (isPaused) return;
     if (materialRef.current && environment.cloudsEnabled) {
       const speed = environment.windEnabled ? (environment.windStrength || 2.0) * 0.3 : environment.cloudsSpeed * 0.6;
       timeRef.current += delta * speed;
@@ -2078,6 +3291,8 @@ function BlizzardCirrusClouds() {
   const timeRef = useRef(0);
 
   useFrame((_, delta) => {
+    const isPaused = useStore.getState().isPaused;
+    if (isPaused) return;
     if (materialRef.current && environment.cloudsEnabled) {
       const speed = environment.windEnabled ? (environment.windStrength || 2.0) * 0.3 : environment.cloudsSpeed * 0.6;
       timeRef.current += delta * speed;
@@ -2186,6 +3401,8 @@ function RainParticles() {
   useFrame((_, delta) => {
     // Read the absolute latest environment settings from the store to avoid stale closures
     const activeEnv = useStore.getState().environment;
+    const isPaused = useStore.getState().isPaused;
+    if (isPaused) return;
     const activeRef = activeEnv.rainTextureUrl && customTexture ? pointsRef : linesRef;
     if (!activeRef.current || !activeEnv.rainEnabled || !posAttributeRef.current) return;
 
@@ -2382,6 +3599,8 @@ function SnowParticles() {
   useFrame((state, delta) => {
     // Read the absolute latest environment settings from the store to avoid stale closures
     const activeEnv = useStore.getState().environment;
+    const isPaused = useStore.getState().isPaused;
+    if (isPaused) return;
     if (!pointsRef.current || !activeEnv.snowEnabled || !posAttributeRef.current) return;
 
     const positions = posAttributeRef.current.array as Float32Array;
@@ -2773,6 +3992,8 @@ function ParticleEmitter({ type, isPlaying, particleProps }: { type: string; isP
 
   useFrame((state, delta) => {
     if (!posAttributeRef.current || !colAttributeRef.current || !sizeAttributeRef.current || !alphaAttributeRef.current || !pointsRef.current) return;
+    const isPaused = useStore.getState().isPaused;
+    if (isPaused) return;
 
     // Retrieve up-to-date environment and particle attributes dynamically to prevent stale React closure bugs
     const currentEnvironment = useStore.getState().environment;
@@ -3351,7 +4572,7 @@ function FoliagePainterController() {
   const eraseFoliageInRadius = useStore((s) => s.eraseFoliageInRadius);
 
   const [isPainting, setIsPainting] = useState(false);
-  const mouse = useRef({ x: 0, y: 0 });
+  const mouse = useRef(new THREE.Vector2(0, 0));
   const isShiftDown = useRef(false);
   const cursorRef = useRef<THREE.Mesh>(null);
 
@@ -3499,75 +4720,5 @@ function FoliagePainterController() {
     </mesh>
   );
 }
-
-// ==========================================
-// SKELETAL RIGGER VISUALIZERS
-// ==========================================
-
-const ConnectionLine = React.memo(function ConnectionLine({ start, end }: { start: THREE.Vector3; end: THREE.Vector3 }) {
-  const points = useMemo(() => [start, end], [start, end]);
-  const lineGeometry = useMemo(() => {
-    const geom = new THREE.BufferGeometry().setFromPoints(points);
-    return geom;
-  }, [points]);
-
-  return (
-    <line geometry={lineGeometry}>
-      <lineBasicMaterial color="#f59e0b" linewidth={3} depthTest={false} transparent opacity={0.85} />
-    </line>
-  );
-});
-
-const SkeletalVisualizer = React.memo(function SkeletalVisualizer({ joints, parentScale = [1, 1, 1] }: { joints?: any[], parentScale?: [number, number, number] }) {
-  if (!joints || joints.length === 0) return null;
-
-  const visualScale = useMemo(() => {
-    const s = parentScale || [1, 1, 1];
-    const maxScale = Math.max(s[0], s[1], s[2]);
-    return 1 / (maxScale || 1);
-  }, [parentScale]);
-
-  const absolutePositions = useMemo(() => {
-    const absolute: Record<string, THREE.Vector3> = {};
-    joints.forEach(joint => {
-      absolute[joint.id] = new THREE.Vector3(...joint.position);
-    });
-    return absolute;
-  }, [joints]);
-
-  return (
-    <group>
-      {joints.map((joint) => {
-        const absPos = absolutePositions[joint.id] || new THREE.Vector3();
-        const parentJoint = joint.parentId ? joints.find(j => j.id === joint.parentId) : null;
-        const parentAbsPos = parentJoint ? (absolutePositions[parentJoint.id] || new THREE.Vector3()) : null;
-
-        return (
-          <group key={joint.id}>
-            {/* Glowing joint node sphere */}
-            <mesh position={absPos}>
-              <sphereGeometry args={[0.045 * visualScale, 16, 16]} />
-              <meshBasicMaterial color="#f59e0b" depthTest={false} transparent opacity={0.9} />
-            </mesh>
-
-            {/* Subtle orbital pointer ring */}
-            <mesh position={absPos} rotation={[Math.PI / 2, 0, 0]}>
-              <ringGeometry args={[0.07 * visualScale, 0.08 * visualScale, 32]} />
-              <meshBasicMaterial color="#fbbf24" depthTest={false} transparent opacity={0.4} />
-            </mesh>
-
-            {/* Bone link to parent */}
-            {parentAbsPos && (
-              <ConnectionLine start={parentAbsPos} end={absPos} />
-            )}
-          </group>
-        );
-      })}
-    </group>
-  );
-});
-
-
-
 
 

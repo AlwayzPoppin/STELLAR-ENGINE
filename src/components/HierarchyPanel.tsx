@@ -16,6 +16,7 @@ import {
   EyeOff,
   Lock,
   Unlock,
+  User,
 } from 'lucide-react';
 
 const getIcon = (geom?: string, type?: string) => {
@@ -108,6 +109,42 @@ const TreeItem = React.memo(function TreeItem({ obj, depth }: { obj: SceneObject
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
+
+    // Check if dropping an asset from bottom panel
+    const assetData = e.dataTransfer.getData('application/json');
+    if (assetData) {
+      try {
+        const asset = JSON.parse(assetData);
+        if (asset.type === 'model' || asset.type === 'scene') {
+          useStore.getState().addObject({
+            id: `obj_${crypto.randomUUID()}`,
+            name: asset.name,
+            type: 'gltf',
+            url: asset.url || '',
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            parentId: obj.id,
+          });
+        } else if (asset.type === 'material') {
+          useStore.getState().addObject({
+            id: `obj_${crypto.randomUUID()}`,
+            name: `Box with ${asset.name}`,
+            type: 'mesh',
+            geometry: 'box',
+            position: [0, 1, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            material: { color: '#888888', roughness: 0.2, metalness: 0.8, envMapIntensity: 1 },
+            parentId: obj.id,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to parse dropped asset data:', err);
+      }
+      return;
+    }
+
     const draggedId = e.dataTransfer.getData('text/plain');
     if (draggedId && draggedId !== obj.id) {
       setParent(draggedId, obj.id);
@@ -125,9 +162,6 @@ const TreeItem = React.memo(function TreeItem({ obj, depth }: { obj: SceneObject
         onClick={(e) => {
           e.stopPropagation();
           selectObject(obj.id, e.shiftKey || e.ctrlKey || e.metaKey);
-          if (obj.joints && obj.joints.length > 0) {
-            useStore.getState().setPreviewedAsset(obj.id);
-          }
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -231,6 +265,10 @@ export default function HierarchyPanel() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
+  const [starterPlayerExpanded, setStarterPlayerExpanded] = useState(true);
+  const [isWorkspaceDragOver, setIsWorkspaceDragOver] = useState(false);
+  const [isStarterPlayerDragOver, setIsStarterPlayerDragOver] = useState(false);
+  const [isLightingDragOver, setIsLightingDragOver] = useState(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -265,12 +303,21 @@ export default function HierarchyPanel() {
 
   const [lightingExpanded, setLightingExpanded] = useState(true);
 
+  // Workspace: root objects that are NOT lights, NOT sun/moon, and NOT the starter_player system folder
   const workspaceObjects = objects.filter(
     (o) =>
       !o.parentId &&
       o.type !== 'light' &&
       o.id !== 'obj_sun' &&
       o.id !== 'obj_moon' &&
+      o.id !== 'starter_player' &&
+      (searchQuery ? o.name.toLowerCase().includes(searchQuery.toLowerCase()) : true),
+  );
+
+  // StarterPlayer: children of the starter_player service folder
+  const starterPlayerChildren = objects.filter(
+    (o) =>
+      o.parentId === 'starter_player' &&
       (searchQuery ? o.name.toLowerCase().includes(searchQuery.toLowerCase()) : true),
   );
 
@@ -281,8 +328,196 @@ export default function HierarchyPanel() {
       (searchQuery ? o.name.toLowerCase().includes(searchQuery.toLowerCase()) : true),
   );
 
+  const handleWorkspaceDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setIsWorkspaceDragOver(true);
+  };
+
+  const handleWorkspaceDragLeave = () => {
+    setIsWorkspaceDragOver(false);
+  };
+
+  const handleWorkspaceDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsWorkspaceDragOver(false);
+    
+    // Check if dropping an asset from bottom panel
+    const assetData = e.dataTransfer.getData('application/json');
+    if (assetData) {
+      try {
+        const asset = JSON.parse(assetData);
+        if (asset.type === 'model' || asset.type === 'scene') {
+          if (asset.url) {
+            useStore.getState().addObject({
+              id: `obj_${crypto.randomUUID()}`,
+              name: asset.name,
+              type: 'gltf',
+              url: asset.url,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              parentId: null,
+            });
+          } else {
+            useStore.getState().addObject({
+              id: `obj_${crypto.randomUUID()}`,
+              name: asset.name,
+              type: 'mesh',
+              geometry: 'box',
+              position: [0, 1, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              material: { color: '#ffffff', roughness: 0.5, metalness: 0, envMapIntensity: 1 },
+              parentId: null,
+            });
+          }
+        } else if (asset.type === 'material') {
+          useStore.getState().addObject({
+            id: `obj_${crypto.randomUUID()}`,
+            name: `Box with ${asset.name}`,
+            type: 'mesh',
+            geometry: 'box',
+            position: [0, 1, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            material: { color: '#888888', roughness: 0.2, metalness: 0.8, envMapIntensity: 1 },
+            parentId: null,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to parse dropped asset data:', err);
+      }
+      return;
+    }
+
+    const draggedId = e.dataTransfer.getData('text/plain');
+    if (draggedId) {
+      setParent(draggedId, null);
+    }
+  };
+
+  // --- StarterPlayer drop handlers ---
+  const handleStarterPlayerDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setIsStarterPlayerDragOver(true);
+  };
+
+  const handleStarterPlayerDragLeave = () => {
+    setIsStarterPlayerDragOver(false);
+  };
+
+  const handleStarterPlayerDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsStarterPlayerDragOver(false);
+
+    // Check if dropping an asset from bottom panel
+    const assetData = e.dataTransfer.getData('application/json');
+    if (assetData) {
+      try {
+        const asset = JSON.parse(assetData);
+        if (asset.type === 'model' || asset.type === 'scene') {
+          if (asset.url) {
+            useStore.getState().addObject({
+              id: `obj_${crypto.randomUUID()}`,
+              name: asset.name,
+              type: 'gltf',
+              url: asset.url,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              parentId: 'starter_player',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to parse dropped asset data:', err);
+      }
+      return;
+    }
+
+    const draggedId = e.dataTransfer.getData('text/plain');
+    if (draggedId) {
+      setParent(draggedId, 'starter_player');
+    }
+  };
+
+  // --- Lighting drop handlers ---
+  const handleLightingDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setIsLightingDragOver(true);
+  };
+
+  const handleLightingDragLeave = () => {
+    setIsLightingDragOver(false);
+  };
+
+  const handleLightingDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsLightingDragOver(false);
+
+    // Check if dropping an asset from bottom panel
+    const assetData = e.dataTransfer.getData('application/json');
+    if (assetData) {
+      try {
+        const asset = JSON.parse(assetData);
+        if (asset.type === 'model' || asset.type === 'scene') {
+          if (asset.url) {
+            useStore.getState().addObject({
+              id: `obj_${crypto.randomUUID()}`,
+              name: asset.name,
+              type: 'gltf',
+              url: asset.url,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              parentId: null,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to parse dropped asset data:', err);
+      }
+      return;
+    }
+
+    const draggedId = e.dataTransfer.getData('text/plain');
+    if (draggedId) {
+      setParent(draggedId, null);
+    }
+  };
+
   const handleRootDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    
+    // Check if dropping an asset from bottom panel
+    const assetData = e.dataTransfer.getData('application/json');
+    if (assetData) {
+      try {
+        const asset = JSON.parse(assetData);
+        if (asset.type === 'model' || asset.type === 'scene') {
+          if (asset.url) {
+            useStore.getState().addObject({
+              id: `obj_${crypto.randomUUID()}`,
+              name: asset.name,
+              type: 'gltf',
+              url: asset.url,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              parentId: null,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to parse dropped asset data:', err);
+      }
+      return;
+    }
+
     const draggedId = e.dataTransfer.getData('text/plain');
     if (draggedId) {
       setParent(draggedId, null);
@@ -349,7 +584,12 @@ export default function HierarchyPanel() {
         </div>
 
         {/* Workspace Root Node */}
-        <div className="group flex flex-col w-full">
+        <div
+          onDragOver={handleWorkspaceDragOver}
+          onDragLeave={handleWorkspaceDragLeave}
+          onDrop={handleWorkspaceDrop}
+          className={`group flex flex-col w-full transition-colors duration-150 ${isWorkspaceDragOver ? 'bg-accent/20 border-y border-accent/40' : ''}`}
+        >
           <div
             onClick={() => setWorkspaceExpanded(!workspaceExpanded)}
             onContextMenu={(e) => {
@@ -371,7 +611,7 @@ export default function HierarchyPanel() {
               <span className="truncate text-[12px] font-medium">Workspace</span>
             </div>
           </div>
-
+ 
           {workspaceExpanded && (
             <div className="flex flex-col w-full">
               {workspaceObjects.map((obj) => (
@@ -381,8 +621,47 @@ export default function HierarchyPanel() {
           )}
         </div>
 
+        {/* StarterPlayer Root Service Node */}
+        <div
+          onDragOver={handleStarterPlayerDragOver}
+          onDragLeave={handleStarterPlayerDragLeave}
+          onDrop={handleStarterPlayerDrop}
+          className={`group flex flex-col w-full mt-1 transition-colors duration-150 ${isStarterPlayerDragOver ? 'bg-violet-500/20 border-y border-violet-400/40' : ''}`}
+        >
+          <div
+            onClick={() => setStarterPlayerExpanded(!starterPlayerExpanded)}
+            className="flex items-center w-full cursor-pointer select-none text-text-primary hover:bg-bg-panel"
+          >
+            <div style={{ paddingLeft: '4px' }} className="flex items-center gap-1.5 w-full py-[3px] pr-2">
+              <div className="w-[18px] h-[18px] flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors shrink-0">
+                {starterPlayerExpanded ? (
+                  <ChevronDown size={14} strokeWidth={2.5} />
+                ) : (
+                  <ChevronRight size={14} strokeWidth={2.5} />
+                )}
+              </div>
+              <User size={14} className="text-violet-400" style={{ filter: 'drop-shadow(0 0 2px #8b5cf6)' }} />
+              <span className="truncate text-[12px] font-medium">Starter Player</span>
+              <span className="ml-auto text-[9px] font-mono uppercase tracking-wider text-violet-400/60 pr-1">service</span>
+            </div>
+          </div>
+
+          {starterPlayerExpanded && (
+            <div className="flex flex-col w-full">
+              {starterPlayerChildren.map((obj) => (
+                <TreeItem key={obj.id} obj={obj} depth={1} />
+              ))}
+            </div>
+          )}
+        </div>
+ 
         {/* Lighting Root Node */}
-        <div className="group flex flex-col w-full mt-1">
+        <div
+          onDragOver={handleLightingDragOver}
+          onDragLeave={handleLightingDragLeave}
+          onDrop={handleLightingDrop}
+          className={`group flex flex-col w-full mt-1 transition-colors duration-150 ${isLightingDragOver ? 'bg-accent/20 border-y border-accent/40' : ''}`}
+        >
           <div
             onClick={() => setLightingExpanded(!lightingExpanded)}
             onContextMenu={(e) => {
@@ -404,7 +683,7 @@ export default function HierarchyPanel() {
               <span className="truncate text-[12px] font-medium">Lighting</span>
             </div>
           </div>
-
+ 
           {lightingExpanded && (
             <div className="flex flex-col w-full">
               {lightingObjects.map((obj) => (

@@ -14,6 +14,7 @@ import {
   Magnet,
   Move,
   Play,
+  Pause,
   RotateCcw,
   Save,
   Scaling,
@@ -36,8 +37,6 @@ import {
   Droplets,
   Zap,
   Brush,
-  Clapperboard,
-  Bone,
 } from 'lucide-react';
 import { useStore as useZustandStore } from 'zustand';
 import { useStore } from '../store/useStore';
@@ -55,11 +54,14 @@ function TopBar() {
     snapGrid,
     toggleSnapGrid,
     clearScene,
+    startNewScene,
     saveProject,
     loadProject,
     isPlaying,
     togglePlay,
     stopPlay,
+    isPaused,
+    togglePause,
     showGrid,
     toggleGrid,
     snapValue,
@@ -71,7 +73,8 @@ function TopBar() {
   } = useStore();
 
   const { undo, redo, pastStates, futureStates } = useZustandStore(useStore.temporal);
-  
+
+
   const [isProjectMenuOpen, setIsProjectMenuOpen] = React.useState(false);
   const [isInsertMenuOpen, setIsInsertMenuOpen] = React.useState(false);
   const [isEffectsMenuOpen, setIsEffectsMenuOpen] = React.useState(false);
@@ -131,7 +134,7 @@ function TopBar() {
                 <div className="fixed inset-0 z-40" onClick={() => setIsProjectMenuOpen(false)} />
                 <div className="absolute top-full left-0 mt-2 w-48 bg-neutral-950 border border-neutral-800 rounded-lg shadow-2xl py-1 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
                   <button
-                    onClick={() => { clearScene(); setIsProjectMenuOpen(false); }}
+                    onClick={() => { startNewScene(); setIsProjectMenuOpen(false); }}
                     className="w-full text-left px-3 py-2 hover:bg-neutral-900 flex items-center gap-2.5 transition-colors text-neutral-300 hover:text-white text-xs font-medium"
                   >
                     <FilePlus size={14} className="text-neutral-500" /> New Scene
@@ -407,56 +410,7 @@ function TopBar() {
           )}
         </div>
 
-        {/* Animation Menu Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => { setIsAnimationMenuOpen(!isAnimationMenuOpen); setIsInsertMenuOpen(false); setIsEffectsMenuOpen(false); }}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150 shadow-sm cursor-pointer ${
-              isAnimationMenuOpen
-                ? 'bg-neutral-900 text-white border-neutral-700 ring-1 ring-neutral-700'
-                : 'bg-neutral-900/40 text-neutral-200 border-neutral-800 hover:bg-neutral-900/80 hover:border-neutral-700'
-            }`}
-          >
-            <Clapperboard size={14} className="text-amber-400" style={{ filter: 'drop-shadow(0 0 2px rgba(245,158,11,0.4))' }} />
-            <span>Animation</span>
-            <ChevronDown size={12} className={`text-neutral-400 transition-transform duration-200 ${isAnimationMenuOpen ? 'rotate-180 text-amber-400' : ''}`} />
-          </button>
 
-          {isAnimationMenuOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setIsAnimationMenuOpen(false)} />
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-52 rounded-lg bg-neutral-950 border border-neutral-800 shadow-2xl p-1.5 z-50 animate-in fade-in slide-in-from-top-1 duration-100 flex flex-col gap-1">
-                <div className="px-2 py-1 text-[9px] font-bold tracking-wider text-neutral-500 uppercase">Animation Tools</div>
-                
-                <button
-                  onClick={() => {
-                    setActiveTool(activeTool === 'skeleton_rig' ? 'select' : 'skeleton_rig');
-                    setIsAnimationMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors text-left cursor-pointer ${activeTool === 'skeleton_rig' ? 'bg-amber-500/10 text-amber-400 font-semibold' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Bone size={14} className={activeTool === 'skeleton_rig' ? 'text-amber-400' : 'text-neutral-400'} />
-                    <span>Skeleton Rigger (Add Bones)</span>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setActiveTool(activeTool === 'animations' ? 'select' : 'animations');
-                    setIsAnimationMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs transition-colors text-left cursor-pointer ${activeTool === 'animations' ? 'bg-amber-500/10 text-amber-400 font-semibold' : 'text-neutral-300 hover:bg-neutral-900 hover:text-white'}`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <Clapperboard size={14} className={activeTool === 'animations' ? 'text-amber-400' : 'text-neutral-400'} />
-                    <span>Animation Timeline</span>
-                  </div>
-                </button>
-              </div>
-            </>
-          )}
-        </div>
       </div>
 
       {/* RIGHT SECTION: Transforms, Snapping & Simulation Core */}
@@ -486,16 +440,7 @@ function TopBar() {
           </button>
         </div>
 
-        {/* Foliage Painter Tool */}
-        <div className="flex bg-neutral-900/60 border border-neutral-800/50 rounded-lg p-0.5 shadow-inner">
-          <button
-            onClick={() => setActiveTool(activeTool === 'foliage' ? 'select' : 'foliage')}
-            className={`p-1.5 transition-all duration-150 cursor-pointer rounded-md ${activeTool === 'foliage' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm' : 'text-neutral-400 hover:text-neutral-200 border border-transparent'}`}
-            title="Foliage Painter (P)"
-          >
-            <Brush size={14} />
-          </button>
-        </div>
+
 
         {/* Environment Toggles & Snapping Menu */}
         <div className="flex bg-neutral-900/60 border border-neutral-800/50 rounded-lg p-0.5 items-center">
@@ -568,6 +513,7 @@ function TopBar() {
           </div>
         </div>
 
+
         {/* Engine Physics Engine Simulator Playback Controls */}
         <div className="flex bg-neutral-900/60 border border-neutral-800/50 rounded-lg p-0.5 shadow-sm">
           <button
@@ -590,13 +536,26 @@ function TopBar() {
           </button>
 
           {isPlaying && (
-            <button
-              onClick={stopPlay}
-              className="p-1.5 transition-all cursor-pointer rounded-md ml-0.5 text-neutral-400 hover:bg-neutral-800 hover:text-red-400"
-              title="Stop Simulation"
-            >
-              <Square size={12} className="fill-current" />
-            </button>
+            <>
+              <button
+                onClick={togglePause}
+                className={`p-1.5 transition-all cursor-pointer rounded-md ml-0.5 ${
+                  isPaused
+                    ? 'text-amber-400 hover:bg-neutral-800/80 hover:text-amber-300 bg-amber-500/10 border border-amber-500/20'
+                    : 'text-neutral-400 hover:bg-neutral-800 hover:text-white border border-transparent'
+                }`}
+                title={isPaused ? "Resume Simulation (P)" : "Pause Simulation (P)"}
+              >
+                {isPaused ? <Play size={12} className="fill-current" /> : <Pause size={12} />}
+              </button>
+              <button
+                onClick={stopPlay}
+                className="p-1.5 transition-all cursor-pointer rounded-md ml-0.5 text-neutral-400 hover:bg-neutral-800 hover:text-red-400 border border-transparent"
+                title="Stop Simulation"
+              >
+                <Square size={12} className="fill-current" />
+              </button>
+            </>
           )}
         </div>
       </div>

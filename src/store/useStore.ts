@@ -1,6 +1,7 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { temporal } from 'zundo';
-import { useAssetStore } from './useAssetStore';
+import { useAssetStore, Asset } from './useAssetStore';
 
 export type SceneObject = {
   id: string;
@@ -18,6 +19,12 @@ export type SceneObject = {
     metalness: number;
     envMapIntensity: number;
     map?: string;
+    normalMap?: string;
+    repeatX?: number;
+    repeatY?: number;
+    opacity?: number;
+    waveHeight?: number;
+    waveSpeed?: number;
   };
   lightProps?: {
     lightType: 'point' | 'spot' | 'directional';
@@ -37,7 +44,20 @@ export type SceneObject = {
     rayDecay?: number;
     rayExposure?: number;
   };
-  behavior?: 'none' | 'spin' | 'float' | 'follow';
+  behavior?: 'none' | 'spin' | 'float' | 'follow' | 'buoyancy';
+  characterActions?: {
+    autoJump: boolean;
+    doubleJump: boolean;
+    sprintEnabled: boolean;
+    crouchEnabled: boolean;
+    dashEnabled?: boolean;
+    dashDistance?: number;
+    dashCooldown?: number;
+    autoClimb?: boolean;
+    footstepAudioEnabled?: boolean;
+    footstepAudioUrl?: string;
+    footstepAudioPath?: string;
+  };
   physics?: 'dynamic' | 'fixed' | 'none';
   scripts?: string[];
   physicsMass?: number;
@@ -64,51 +84,7 @@ export type SceneObject = {
     applyPhysics?: boolean;
     spread?: number;
   };
-  animationPath?: [number, number, number][];
-  joints?: JointData[];
-  paintedPhysics?: Record<number, string>;
 };
-
-export interface JointData {
-  id: string;
-  name: string;
-  position: [number, number, number];
-  rotation: [number, number, number];
-  parentId: string | null;
-  ikEnabled?: boolean;
-  ikTarget?: [number, number, number] | null;
-}
-
-export function getMirrorJointName(name: string): string {
-  if (name.includes('Left')) return name.replace('Left', 'Right');
-  if (name.includes('Right')) return name.replace('Right', 'Left');
-  if (name.includes('left')) return name.replace('left', 'right');
-  if (name.includes('right')) return name.replace('right', 'left');
-  if (name.includes('_L_')) return name.replace('_L_', '_R_');
-  if (name.includes('_R_')) return name.replace('_R_', '_L_');
-  if (name.includes('_l_')) return name.replace('_l_', '_r_');
-  if (name.includes('_r_')) return name.replace('_r_', '_l_');
-  if (name.startsWith('L_')) return name.replace('L_', 'R_');
-  if (name.startsWith('R_')) return name.replace('R_', 'L_');
-  if (name.endsWith('_L')) return name.replace('_L', '_R');
-  if (name.endsWith('_R')) return name.replace('_R', '_L');
-  if (name.endsWith('_l')) return name.replace('_l', '_r');
-  if (name.endsWith('_r')) return name.replace('_r', '_l');
-  return name;
-}
-
-export function getMirrorAxis(joints: JointData[]): 'x' | 'z' {
-  if (!joints || joints.length === 0) return 'x';
-  let maxAbsX = 0;
-  let maxAbsZ = 0;
-  for (const j of joints) {
-    const x = Math.abs(j.position[0]);
-    const z = Math.abs(j.position[2]);
-    if (x > maxAbsX) maxAbsX = x;
-    if (z > maxAbsZ) maxAbsZ = z;
-  }
-  return maxAbsZ > maxAbsX ? 'z' : 'x';
-}
 
 export type EnvironmentSettings = {
   ambientIntensity: number;
@@ -139,6 +115,7 @@ export type EnvironmentSettings = {
   windStrength: number;
   windDirection: 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW';
   windTurbulence: number;
+  gravity: number;
 };
 
 export interface FoliageInstanceData {
@@ -150,8 +127,8 @@ export interface FoliageInstanceData {
 }
 
 interface EngineState {
-  activeTool: 'select' | 'foliage' | 'animation_path' | 'skeleton_rig' | 'animations' | 'physics_brush' | 'cinematics_lab';
-  setActiveTool: (tool: 'select' | 'foliage' | 'animation_path' | 'skeleton_rig' | 'animations' | 'physics_brush' | 'cinematics_lab') => void;
+  activeTool: 'select' | 'foliage';
+  setActiveTool: (tool: 'select' | 'foliage') => void;
   foliageBrushAssetId: string | null;
   setFoliageBrushAssetId: (id: string | null) => void;
   foliageInstances: FoliageInstanceData[];
@@ -168,6 +145,13 @@ interface EngineState {
   selectedIds: string[];
   transformMode: 'translate' | 'rotate' | 'scale';
   setTransformMode: (mode: 'translate' | 'rotate' | 'scale') => void;
+  pivotMode: 'center' | 'base';
+  setPivotMode: (mode: 'center' | 'base') => void;
+  gizmoFocused: boolean;
+  setGizmoFocused: (focused: boolean) => void;
+  activePreviewAsset: Asset | null;
+  previewRect: { top: number; left: number; width: number; height: number } | null;
+  setActivePreviewAsset: (asset: Asset | null, rect: { top: number; left: number; width: number; height: number } | null) => void;
   snapGrid: boolean;
   toggleSnapGrid: () => void;
   snapValue: number;
@@ -185,11 +169,13 @@ interface EngineState {
   isPlaying: boolean;
   togglePlay: () => void;
   stopPlay: () => void;
+  isPaused: boolean;
+  togglePause: () => void;
+  setPaused: (paused: boolean) => void;
+  playerAnimationState: 'idle' | 'walk' | 'sprint' | 'jump' | 'dash' | 'climb';
+  setPlayerAnimationState: (animState: 'idle' | 'walk' | 'sprint' | 'jump' | 'dash' | 'climb') => void;
   selectObject: (id: string | null, multi?: boolean) => void;
   updateObject: (id: string, updates: Partial<SceneObject>) => void;
-  addJoint: (objectId: string, joint: JointData) => void;
-  updateJoint: (objectId: string, jointId: string, updates: Partial<JointData>, skipSymmetry?: boolean) => void;
-  deleteJoint: (objectId: string, jointId: string) => void;
   addObject: (obj: SceneObject) => void;
   deleteObject: (id: string) => void;
   duplicateObject: (id: string) => void;
@@ -217,6 +203,7 @@ interface EngineState {
   ) => void;
   setParent: (childId: string, parentId: string | null) => void;
   clearScene: () => void;
+  startNewScene: () => void;
   saveProject: () => void;
   loadProject: (jsonData: string) => void;
   contextMenu: { x: number; y: number; type: 'hierarchy' | 'viewport' | 'workspace' | 'lighting'; targetId: string | null } | null;
@@ -243,24 +230,24 @@ interface EngineState {
   toggleSidebar: () => void;
   toggleBottomPanel: () => void;
   toggleInspector: () => void;
-  previewedAssetId: string | null;
-  setPreviewedAsset: (id: string | null) => void;
-  getPreviewObject: (id: string | null) => SceneObject | undefined;
-  selectedJointId: string | null;
-  setSelectedJointId: (id: string | null) => void;
-  symmetryEnabled: boolean;
-  toggleSymmetry: () => void;
-  antiSymmetryEnabled: boolean;
-  toggleAntiSymmetry: () => void;
   panelWidth: number;
   setPanelWidth: (w: number) => void;
+  hasHydrated: boolean;
+  setHasHydrated: (hydrated: boolean) => void;
+  isPickingAsset: boolean;
+  setIsPickingAsset: (isPicking: boolean) => void;
+  activePickerTarget: string | null;
+  setActivePickerTarget: (target: string | null) => void;
+  sceneId: string;
 }
 
 export const useStore = create<EngineState>()(
-  temporal(
+  persist(
+    temporal(
     (set, get) => ({
-      activeTool: 'select',
-      setActiveTool: (tool) => set({ activeTool: tool }),
+      sceneId: 'default',
+      activeTool: 'select' as const,
+      setActiveTool: (tool: 'select' | 'foliage') => set({ activeTool: tool }),
       foliageBrushAssetId: null,
       setFoliageBrushAssetId: (id) => set({ foliageBrushAssetId: id }),
       foliageInstances: [],
@@ -311,6 +298,7 @@ export const useStore = create<EngineState>()(
         windStrength: 2.0,
         windDirection: 'SE',
         windTurbulence: 0.5,
+        gravity: -9.81,
       },
       updateEnvironment: (updates) =>
         set((state) => ({
@@ -373,6 +361,18 @@ export const useStore = create<EngineState>()(
           physicsCollisions: true,
           visible: true,
           parentId: 'starter_player',
+          characterActions: {
+            autoJump: false,
+            doubleJump: false,
+            sprintEnabled: true,
+            crouchEnabled: false,
+            dashEnabled: false,
+            dashDistance: 5.0,
+            dashCooldown: 1.0,
+            autoClimb: false,
+            footstepAudioEnabled: false,
+            footstepAudioUrl: '/sounds/footstep.wav',
+          },
         },
         {
           id: 'obj_sun',
@@ -414,6 +414,13 @@ export const useStore = create<EngineState>()(
       selectedIds: [],
       transformMode: 'translate',
       setTransformMode: (mode) => set({ transformMode: mode }),
+      pivotMode: 'center',
+      setPivotMode: (mode) => set({ pivotMode: mode }),
+      gizmoFocused: false,
+      setGizmoFocused: (focused) => set({ gizmoFocused: focused }),
+      activePreviewAsset: null,
+      previewRect: null,
+      setActivePreviewAsset: (asset, rect) => set({ activePreviewAsset: asset, previewRect: rect }),
       snapGrid: false,
       toggleSnapGrid: () => set((state) => ({ snapGrid: !state.snapGrid })),
       snapValue: 1.0,
@@ -429,8 +436,20 @@ export const useStore = create<EngineState>()(
       wireframeMode: false,
       toggleWireframeMode: () => set((state) => ({ wireframeMode: !state.wireframeMode })),
       isPlaying: false,
-      togglePlay: () => set((state) => ({ isPlaying: !state.isPlaying })),
-      stopPlay: () => set({ isPlaying: false }),
+      isPaused: false,
+      playerAnimationState: 'idle',
+      setPlayerAnimationState: (animState) => set({ playerAnimationState: animState }),
+      togglePlay: () =>
+        set((state) => {
+          const nextPlaying = !state.isPlaying;
+          return {
+            isPlaying: nextPlaying,
+            isPaused: nextPlaying ? state.isPaused : false,
+          };
+        }),
+      stopPlay: () => set({ isPlaying: false, isPaused: false }),
+      togglePause: () => set((state) => ({ isPaused: state.isPlaying ? !state.isPaused : false })),
+      setPaused: (paused) => set((state) => ({ isPaused: state.isPlaying ? paused : false })),
       selectObject: (id, multi) =>
         set((state) => {
           if (multi && id) {
@@ -444,101 +463,6 @@ export const useStore = create<EngineState>()(
       updateObject: (id, updates) =>
         set((state) => ({
           objects: state.objects.map((obj) => (obj.id === id ? { ...obj, ...updates } : obj)),
-        })),
-      addJoint: (objectId, joint) =>
-        set((state) => ({
-          objects: state.objects.map((obj) =>
-            obj.id === objectId
-              ? { ...obj, joints: [...(obj.joints || []), joint] }
-              : obj
-          ),
-        })),
-      updateJoint: (objectId, jointId, updates, skipSymmetry = false) =>
-        set((state) => {
-          const obj = state.objects.find((o) => o.id === objectId);
-          if (!obj) return {};
-
-          const joints = obj.joints || [];
-          const selectedJoint = joints.find((j) => j.id === jointId);
-          if (!selectedJoint) return {};
-
-          let nextJoints = joints.map((j) =>
-            j.id === jointId ? { ...j, ...updates } : j
-          );
-
-          if (state.symmetryEnabled && !skipSymmetry) {
-            const cpName = getMirrorJointName(selectedJoint.name);
-            if (cpName !== selectedJoint.name) {
-              const counterpartJoint = joints.find((j) => j.name === cpName);
-              if (counterpartJoint) {
-                const mirrorAxis = getMirrorAxis(joints);
-                const cpUpdates: Partial<JointData> = {};
-
-                if (updates.position !== undefined) {
-                  const cpPos = [...updates.position] as [number, number, number];
-                  if (mirrorAxis === 'z') {
-                    cpPos[2] = -cpPos[2];
-                  } else {
-                    cpPos[0] = -cpPos[0];
-                  }
-                  cpUpdates.position = cpPos;
-                }
-
-                if (updates.rotation !== undefined) {
-                  const [rx, ry, rz] = updates.rotation;
-                  const isAnti = state.antiSymmetryEnabled;
-                  if (mirrorAxis === 'z') {
-                    // Character faces X (L/R legs separated along Z)
-                    // Pitch is Z, Roll is X.
-                    cpUpdates.rotation = [-rx, -ry, isAnti ? -rz : rz];
-                  } else {
-                    // Character faces Z (L/R legs separated along X)
-                    // Pitch is X, Roll is Z.
-                    cpUpdates.rotation = [isAnti ? -rx : rx, -ry, -rz];
-                  }
-                }
-
-                if (updates.ikTarget !== undefined) {
-                  if (updates.ikTarget === null) {
-                    cpUpdates.ikTarget = null;
-                  } else {
-                    const cpTarget = [...updates.ikTarget] as [number, number, number];
-                    if (mirrorAxis === 'z') {
-                      cpTarget[2] = -cpTarget[2];
-                    } else {
-                      cpTarget[0] = -cpTarget[0];
-                    }
-                    cpUpdates.ikTarget = cpTarget;
-                  }
-                }
-
-                if (updates.ikEnabled !== undefined) {
-                  cpUpdates.ikEnabled = updates.ikEnabled;
-                }
-
-                nextJoints = nextJoints.map((j) =>
-                  j.id === counterpartJoint.id ? { ...j, ...cpUpdates } : j
-                );
-              }
-            }
-          }
-
-          return {
-            objects: state.objects.map((o) =>
-              o.id === objectId ? { ...o, joints: nextJoints } : o
-            ),
-          };
-        }),
-      deleteJoint: (objectId, jointId) =>
-        set((state) => ({
-          objects: state.objects.map((obj) =>
-            obj.id === objectId
-              ? {
-                  ...obj,
-                  joints: (obj.joints || []).filter((j) => j.id !== jointId),
-                }
-              : obj
-          ),
         })),
       addObject: (obj) => set((state) => ({ objects: [...state.objects, obj] })),
       deleteObject: (id) =>
@@ -652,7 +576,150 @@ export const useStore = create<EngineState>()(
             objects: state.objects.map((obj) => (obj.id === childId ? { ...obj, parentId } : obj)),
           };
         }),
-      clearScene: () => set({ objects: [], selectedIds: [] }),
+      clearScene: () => set({ objects: [], selectedIds: [], sceneId: crypto.randomUUID() }),
+      startNewScene: () => set((state) => ({
+        sceneId: crypto.randomUUID(),
+        objects: [
+          {
+            id: 'obj_1',
+            name: 'Default Cube',
+            type: 'mesh',
+            geometry: 'box',
+            position: [0, 0.5, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            physics: 'dynamic',
+            material: { color: '#ffffff', roughness: 0.2, metalness: 0.8, envMapIntensity: 1 },
+          },
+          {
+            id: 'obj_2',
+            name: 'Smooth Sphere',
+            type: 'mesh',
+            geometry: 'sphere',
+            position: [2, 1, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            physics: 'dynamic',
+            material: { color: '#ff4400', roughness: 0.1, metalness: 0.9, envMapIntensity: 1 },
+          },
+          {
+            id: 'obj_3',
+            name: 'Ground Plane',
+            type: 'mesh',
+            geometry: 'plane',
+            position: [0, 0, 0],
+            rotation: [-Math.PI / 2, 0, 0],
+            scale: [10, 10, 1],
+            physics: 'fixed',
+            anchored: true,
+            isSolid: true,
+            material: { color: '#222222', roughness: 0.1, metalness: 0.1, envMapIntensity: 0.5 },
+          },
+          {
+            id: 'starter_player',
+            name: 'Starter Player',
+            type: 'group',
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          },
+          {
+            id: 'obj_player',
+            name: 'Test Player',
+            type: 'gltf',
+            url: '/humanoid+robot+3d+model.glb',
+            position: [-2, 1, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+            physics: 'dynamic',
+            physicsMass: 80,
+            physicsCollisions: true,
+            visible: true,
+            parentId: 'starter_player',
+            characterActions: {
+              autoJump: false,
+              doubleJump: false,
+              sprintEnabled: true,
+              crouchEnabled: false,
+              dashEnabled: false,
+              dashDistance: 5.0,
+              dashCooldown: 1.0,
+              autoClimb: false,
+              footstepAudioEnabled: false,
+              footstepAudioUrl: '/sounds/footstep.wav',
+            },
+          },
+          {
+            id: 'obj_sun',
+            name: 'Physical Sun',
+            type: 'gltf',
+            url: '/_shining_sun.glb',
+            position: [200, 400, 200],
+            rotation: [0, 0, 0],
+            scale: [10, 10, 10],
+            visible: true,
+            celestialProps: {
+              colorTemperature: 5600,
+              diskScale: 1.0,
+              volumetricIntensity: 1.0,
+              atmosphericContribution: 1.0,
+              godRaysEnabled: true,
+              rayWeight: 0.6,
+              rayDecay: 0.93,
+              rayExposure: 0.6,
+            },
+          },
+          {
+            id: 'obj_moon',
+            name: 'Physical Moon',
+            type: 'gltf',
+            url: '/shining_moon_.glb',
+            position: [-200, -400, -200],
+            rotation: [0, 0, 0],
+            scale: [10, 10, 10],
+            visible: true,
+            celestialProps: {
+              colorTemperature: 4000,
+              diskScale: 0.8,
+              volumetricIntensity: 0.5,
+              atmosphericContribution: 0.2,
+            },
+          },
+        ],
+        selectedIds: [],
+        foliageInstances: [],
+        environment: {
+          ambientIntensity: 0.2,
+          directionalIntensity: 1.5,
+          bloomIntensity: 1.5,
+          preset: 'sunset',
+          fogEnabled: false,
+          fogColor: '#101012',
+          fogNear: 5,
+          fogFar: 30,
+          fogDensity: 0.01,
+          exposure: 1,
+          timeOfDay: 12,
+          cycleDuration: 60,
+          cloudsEnabled: true,
+          cloudsDensity: 0.5,
+          cloudsSpeed: 1.0,
+          cloudsType: 'volumetric',
+          rainEnabled: false,
+          rainIntensity: 0.5,
+          rainSpeed: 1.0,
+          rainTextureUrl: null,
+          snowEnabled: false,
+          snowIntensity: 0.5,
+          snowSpeed: 1.0,
+          snowTextureUrl: null,
+          windEnabled: false,
+          windStrength: 2.0,
+          windDirection: 'SE',
+          windTurbulence: 0.5,
+          gravity: -9.81,
+        }
+      })),
       saveProject: () => {
         const state = get();
         const data = JSON.stringify({ objects: state.objects, environment: state.environment }, null, 2);
@@ -668,7 +735,7 @@ export const useStore = create<EngineState>()(
         try {
           const parsed = JSON.parse(jsonStr);
           if (parsed.objects && parsed.environment) {
-            set({ objects: parsed.objects, environment: parsed.environment, selectedIds: [] });
+            set({ objects: parsed.objects, environment: parsed.environment, selectedIds: [], sceneId: crypto.randomUUID() });
           } else {
             alert('Invalid project file structure.');
           }
@@ -686,6 +753,7 @@ export const useStore = create<EngineState>()(
           name: 'Script.js',
           type: 'script' as const,
           content: `function update(self, delta) {\n\t// Logic for ${objectId || 'Workspace'}\n}`,
+          category: 'Scripts' as const,
         };
 
         // 1. Register in Asset Store
@@ -888,21 +956,80 @@ export const useStore = create<EngineState>()(
       toggleSidebar: () => set((state) => ({ sidebarVisible: !state.sidebarVisible })),
       toggleBottomPanel: () => set((state) => ({ bottomPanelVisible: !state.bottomPanelVisible })),
       toggleInspector: () => set((state) => ({ inspectorVisible: !state.inspectorVisible })),
-      previewedAssetId: null,
-      setPreviewedAsset: (id) => set({ previewedAssetId: id }),
-      getPreviewObject: (id) => get().objects.find((o) => o.id === id),
-      selectedJointId: null,
-      setSelectedJointId: (id) => set({ selectedJointId: id }),
-      symmetryEnabled: true,
-      toggleSymmetry: () => set((state) => ({ symmetryEnabled: !state.symmetryEnabled })),
-      antiSymmetryEnabled: false,
-      toggleAntiSymmetry: () => set((state) => ({ antiSymmetryEnabled: !state.antiSymmetryEnabled })),
       panelWidth: 450,
       setPanelWidth: (w) => set({ panelWidth: w }),
+      hasHydrated: false,
+      setHasHydrated: (hydrated) => set({ hasHydrated: hydrated }),
+      isPickingAsset: false,
+      setIsPickingAsset: (isPicking) => set({ isPickingAsset: isPicking }),
+      activePickerTarget: null,
+      setActivePickerTarget: (target) => set({ activePickerTarget: target }),
     }),
     {
       partialize: (state) => ({ objects: state.objects, environment: state.environment }),
     },
+  ),
+  {
+    name: 'stellar-engine-storage',
+      partialize: (state) => {
+        const {
+          activeTool,
+          foliageBrushAssetId,
+          foliageInstances,
+          foliageBrushRadius,
+          foliageBrushDensity,
+          environment,
+          objects,
+          selectedIds,
+          transformMode,
+          pivotMode,
+          snapGrid,
+          snapValue,
+          showGrid,
+          showOverlays,
+          showPhysicsDebug,
+          showEmitters,
+          wireframeMode,
+          panelWidth,
+          sidebarVisible,
+          bottomPanelVisible,
+          inspectorVisible,
+        } = state;
+        return {
+          activeTool,
+          foliageBrushAssetId,
+          foliageInstances,
+          foliageBrushRadius,
+          foliageBrushDensity,
+          environment,
+          objects,
+          selectedIds,
+          transformMode,
+          pivotMode,
+          snapGrid,
+          snapValue,
+          showGrid,
+          showOverlays,
+          showPhysicsDebug,
+          showEmitters,
+          wireframeMode,
+          panelWidth,
+          sidebarVisible,
+          bottomPanelVisible,
+          inspectorVisible,
+        };
+      },
+      onRehydrateStorage: () => {
+        return (state, error) => {
+          if (error) {
+            console.error('An error occurred during hydration:', error);
+          }
+          if (state) {
+            state.setHasHydrated(true);
+          }
+        };
+      },
+    }
   ),
 );
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { useStore, getMirrorAxis } from './useStore';
+import { useStore } from './useStore';
 
 describe('useStore', () => {
   it('should have initial state', () => {
@@ -33,85 +33,33 @@ describe('useStore', () => {
     expect(updatedState.objects.find(o => o.id === 'test_obj')).toBeUndefined();
   });
 
-  it('should mirror joint updates under symmetry', () => {
+  it('should regenerate sceneId on clearScene, startNewScene, and loadProject', () => {
     const state = useStore.getState();
-    
-    // Add custom joints to 'obj_player'
-    const player = state.objects.find(o => o.id === 'obj_player')!;
-    expect(player).toBeDefined();
+    const initialSceneId = state.sceneId;
+    expect(initialSceneId).toBeDefined();
 
-    // Set symmetry to true
-    useStore.setState({ symmetryEnabled: true });
+    // 1. clearScene
+    state.clearScene();
+    const stateAfterClear = useStore.getState();
+    expect(stateAfterClear.sceneId).not.toBe(initialSceneId);
+    expect(stateAfterClear.objects.length).toBe(0);
 
-    // Add L and R arm joints
-    const leftArmId = 'joint_l_arm';
-    const rightArmId = 'joint_r_arm';
-    
-    state.addJoint('obj_player', {
-      id: leftArmId,
-      name: 'AutoRig_L_Shoulder',
-      position: [0, 1, 0.5],
-      rotation: [0, 0, 0],
-      parentId: null,
+    // 2. startNewScene
+    stateAfterClear.startNewScene();
+    const stateAfterNew = useStore.getState();
+    expect(stateAfterNew.sceneId).not.toBe(stateAfterClear.sceneId);
+    expect(stateAfterNew.objects.length).toBeGreaterThan(0);
+
+    // 3. loadProject
+    const projectData = JSON.stringify({
+      objects: [{ id: 'loaded_cube', name: 'Loaded Cube', type: 'mesh', geometry: 'box', position: [0,0,0], rotation: [0,0,0], scale: [1,1,1] }],
+      environment: stateAfterNew.environment
     });
-    
-    state.addJoint('obj_player', {
-      id: rightArmId,
-      name: 'AutoRig_R_Shoulder',
-      position: [0, 1, -0.5],
-      rotation: [0, 0, 0],
-      parentId: null,
-    });
-
-    // Verify that getMirrorAxis returns 'z' because the max coordinate spread is along Z
-    const updatedPlayer1 = useStore.getState().objects.find(o => o.id === 'obj_player')!;
-    const mirrorAxis = getMirrorAxis(updatedPlayer1.joints || []);
-    expect(mirrorAxis).toBe('z');
-
-    // Update left arm rotation
-    state.updateJoint('obj_player', leftArmId, {
-      rotation: [45, 30, 15],
-    });
-
-    // The counterpart (right arm) should be updated symmetrically.
-    // For Z-mirror, updates.rotation = [rx, ry, rz] becomes [-rx, -ry, rz], so [-45, -30, 15].
-    const updatedPlayer2 = useStore.getState().objects.find(o => o.id === 'obj_player')!;
-    const rightArm = updatedPlayer2.joints!.find(j => j.id === rightArmId)!;
-    expect(rightArm.rotation).toEqual([-45, -30, 15]);
-
-    // Update left arm position
-    state.updateJoint('obj_player', leftArmId, {
-      position: [0.1, 1.2, 0.6],
-    });
-
-    // The counterpart (right arm) position should negate the Z coordinate: [0.1, 1.2, -0.6]
-    const updatedPlayer3 = useStore.getState().objects.find(o => o.id === 'obj_player')!;
-    const rightArmPos = updatedPlayer3.joints!.find(j => j.id === rightArmId)!;
-    expect(rightArmPos.position).toEqual([0.1, 1.2, -0.6]);
-  });
-
-  it('should anti-mirror (invert Pitch) joint updates under antiSymmetry', () => {
-    const state = useStore.getState();
-    
-    // Enable symmetry AND anti-symmetry
-    useStore.setState({ symmetryEnabled: true, antiSymmetryEnabled: true });
-
-    const leftArmId = 'joint_l_arm';
-    const rightArmId = 'joint_r_arm';
-
-    // Update left arm rotation with pitch=45, yaw=30, roll=15
-    state.updateJoint('obj_player', leftArmId, {
-      rotation: [45, 30, 15],
-    });
-
-    // The counterpart (right arm) should be updated with anti-symmetry.
-    // For Z-mirror, updates.rotation = [rx, ry, rz] becomes [-rx, -ry, -rz], so [-45, -30, -15].
-    const updatedPlayer = useStore.getState().objects.find(o => o.id === 'obj_player')!;
-    const rightArm = updatedPlayer.joints!.find(j => j.id === rightArmId)!;
-    expect(rightArm.rotation).toEqual([-45, -30, -15]);
-
-    // Restore store defaults
-    useStore.setState({ symmetryEnabled: true, antiSymmetryEnabled: false });
+    stateAfterNew.loadProject(projectData);
+    const stateAfterLoad = useStore.getState();
+    expect(stateAfterLoad.sceneId).not.toBe(stateAfterNew.sceneId);
+    expect(stateAfterLoad.objects.length).toBe(1);
+    expect(stateAfterLoad.objects[0].id).toBe('loaded_cube');
   });
 });
 
