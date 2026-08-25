@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore, SceneObject } from '../store/useStore';
 import { useAssetStore } from '../store/useAssetStore';
 import { toast } from '../store/useToastStore';
@@ -32,6 +32,31 @@ import {
   FlipVertical,
 } from 'lucide-react';
 
+export function computeClampedMenuPosition(
+  x: number,
+  y: number,
+  menuWidth: number,
+  menuHeight: number,
+  viewportWidth: number = typeof window !== 'undefined' ? window.innerWidth : 1920,
+  viewportHeight: number = typeof window !== 'undefined' ? window.innerHeight : 1080,
+  padding: number = 8
+): { top: number; left: number } {
+  let left = x;
+  let top = y;
+
+  if (x + menuWidth + padding > viewportWidth) {
+    left = Math.max(padding, viewportWidth - menuWidth - padding);
+  }
+  if (y + menuHeight + padding > viewportHeight) {
+    top = Math.max(padding, viewportHeight - menuHeight - padding);
+  }
+
+  return {
+    top: Math.max(padding, Math.min(top, Math.max(padding, viewportHeight - menuHeight - padding))),
+    left: Math.max(padding, Math.min(left, Math.max(padding, viewportWidth - menuWidth - padding))),
+  };
+}
+
 export default function ContextMenu() {
   const {
     objects,
@@ -64,6 +89,22 @@ export default function ContextMenu() {
     duplicateScene,
   } = useStore();
   const menuRef = useRef<HTMLDivElement>(null);
+  const [adjustedPos, setAdjustedPos] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !menuRef.current) return;
+    const { x, y } = contextMenu;
+    const rect = menuRef.current.getBoundingClientRect();
+    const clamped = computeClampedMenuPosition(
+      x,
+      y,
+      rect.width || 185,
+      rect.height || 250,
+      window.innerWidth,
+      window.innerHeight
+    );
+    setAdjustedPos(clamped);
+  }, [contextMenu]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -194,7 +235,10 @@ export default function ContextMenu() {
     <div
       ref={menuRef}
       className="fixed z-50 bg-[#181824]/95 backdrop-blur-md border border-neutral-800/80 rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.5)] py-1.5 min-w-[185px] text-[11px] font-medium text-text-primary select-none custom-context-menu animate-in fade-in zoom-in-95 duration-100"
-      style={{ top: Math.min(y, window.innerHeight - 250), left: Math.min(x, window.innerWidth - 200) }}
+      style={{
+        top: adjustedPos ? adjustedPos.top : (contextMenu ? Math.max(8, Math.min(y, window.innerHeight - 300)) : y),
+        left: adjustedPos ? adjustedPos.left : (contextMenu ? Math.max(8, Math.min(x, window.innerWidth - 220)) : x),
+      }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {(type === 'viewport' || type === 'hierarchy') && !targetId ? (
