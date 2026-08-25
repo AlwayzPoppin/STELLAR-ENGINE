@@ -16,7 +16,7 @@ import {
   Stats,
   useTexture,
 } from '@react-three/drei';
-import { Physics, RigidBody, CuboidCollider, BallCollider, useRapier, Debug } from '@react-three/rapier';
+import { Physics, RigidBody, CuboidCollider, BallCollider, useRapier } from '@react-three/rapier';
 import { Geometry, Base, Addition, Subtraction, Intersection } from '@react-three/csg';
 import { EffectComposer, Bloom, ToneMapping, Vignette, Outline, Selection, Select, GodRays } from '@react-three/postprocessing';
 import { useStore, SceneObject, FoliageInstanceData, BoneNode } from '../store/useStore';
@@ -3146,7 +3146,6 @@ export default function Viewport() {
             <BoneVisualizer />
 
             <Physics paused={!isPlaying || isPaused} debug={showPhysicsDebug} gravity={[0, environment.gravity ?? -9.81, 0]}>
-              {showPhysicsDebug && <Debug />}
               <group name="export_scene">
                 {rootObjects.map((obj) => (
                   <SceneNode
