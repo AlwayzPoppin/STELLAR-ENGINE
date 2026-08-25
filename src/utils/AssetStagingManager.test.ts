@@ -62,4 +62,12 @@ describe('AssetStagingManager queue and preloading', () => {
     expect(finalEvent.completed).toBe(3);
     expect(finalEvent.percent).toBe(100);
   });
+
+  it('should auto-detect and stage Wavefront .obj and FBX assets', async () => {
+    await AssetStagingManager.stageAsset('/models/human_survivor.obj');
+    expect(AssetStagingManager.isStaged('/models/human_survivor.obj')).toBe(true);
+
+    await AssetStagingManager.stageAsset('/models/warrior.fbx');
+    expect(AssetStagingManager.isStaged('/models/warrior.fbx')).toBe(true);
+  });
 });

@@ -348,10 +348,12 @@ const TreeItem = React.memo(function TreeItem({ obj, depth }: { obj: SceneObject
       try {
         const asset = JSON.parse(assetData);
         if (asset.type === 'model' || asset.type === 'scene') {
+          const lower = (asset.name || asset.url || '').toLowerCase();
+          const modelType = lower.endsWith('.obj') ? 'obj' : (lower.endsWith('.fbx') ? 'fbx' : 'gltf');
           useStore.getState().addObject({
             id: `obj_${crypto.randomUUID()}`,
             name: asset.name,
-            type: 'gltf',
+            type: modelType,
             url: asset.url?.startsWith('data:') ? asset.id : (asset.url || ''),
             position: [0, 0, 0],
             rotation: [0, 0, 0],
@@ -833,10 +835,12 @@ export default function HierarchyPanel() {
           });
         } else if (asset.type === 'model' || asset.type === 'scene') {
           if (asset.url) {
+            const lower = (asset.name || asset.url || '').toLowerCase();
+            const modelType = lower.endsWith('.obj') ? 'obj' : (lower.endsWith('.fbx') ? 'fbx' : 'gltf');
             useStore.getState().addObject({
               id: `obj_${crypto.randomUUID()}`,
               name: asset.name,
-              type: 'gltf',
+              type: modelType,
               url: asset.url.startsWith('data:') ? asset.id : asset.url,
               position: [0, 0, 0],
               rotation: [0, 0, 0],
@@ -929,10 +933,12 @@ export default function HierarchyPanel() {
         const asset = JSON.parse(assetData);
         if (asset.type === 'model' || asset.type === 'scene') {
           if (asset.url) {
+            const lower = (asset.name || asset.url || '').toLowerCase();
+            const modelType = lower.endsWith('.obj') ? 'obj' : (lower.endsWith('.fbx') ? 'fbx' : 'gltf');
             useStore.getState().addObject({
               id: `obj_${crypto.randomUUID()}`,
               name: asset.name,
-              type: 'gltf',
+              type: modelType,
               url: asset.url.startsWith('data:') ? asset.id : asset.url,
               position: [0, 0, 0],
               rotation: [0, 0, 0],
@@ -988,10 +994,12 @@ export default function HierarchyPanel() {
         const asset = JSON.parse(assetData);
         if (asset.type === 'model' || asset.type === 'scene') {
           if (asset.url) {
+            const lower = (asset.name || asset.url || '').toLowerCase();
+            const modelType = lower.endsWith('.obj') ? 'obj' : (lower.endsWith('.fbx') ? 'fbx' : 'gltf');
             useStore.getState().addObject({
               id: `obj_${crypto.randomUUID()}`,
               name: asset.name,
-              type: 'gltf',
+              type: modelType,
               url: asset.url.startsWith('data:') ? asset.id : asset.url,
               position: [0, 0, 0],
               rotation: [0, 0, 0],
@@ -1035,10 +1043,12 @@ export default function HierarchyPanel() {
         const asset = JSON.parse(assetData);
         if (asset.type === 'model' || asset.type === 'scene') {
           if (asset.url) {
+            const lower = (asset.name || asset.url || '').toLowerCase();
+            const modelType = lower.endsWith('.obj') ? 'obj' : (lower.endsWith('.fbx') ? 'fbx' : 'gltf');
             useStore.getState().addObject({
               id: `obj_${crypto.randomUUID()}`,
               name: asset.name,
-              type: 'gltf',
+              type: modelType,
               url: asset.url.startsWith('data:') ? asset.id : asset.url,
               position: [0, 0, 0],
               rotation: [0, 0, 0],
@@ -1069,10 +1079,12 @@ export default function HierarchyPanel() {
         const asset = JSON.parse(assetData);
         if (asset.type === 'model' || asset.type === 'scene') {
           if (asset.url) {
+            const lower = (asset.name || asset.url || '').toLowerCase();
+            const modelType = lower.endsWith('.obj') ? 'obj' : (lower.endsWith('.fbx') ? 'fbx' : 'gltf');
             useStore.getState().addObject({
               id: `obj_${crypto.randomUUID()}`,
               name: asset.name,
-              type: 'gltf',
+              type: modelType,
               url: asset.url.startsWith('data:') ? asset.id : asset.url,
               position: [0, 0, 0],
               rotation: [0, 0, 0],

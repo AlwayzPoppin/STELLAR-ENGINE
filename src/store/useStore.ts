@@ -149,7 +149,7 @@ export interface VoxelHotbarProps {
 export type SceneObject = {
   id: string;
   name: string;
-  type: 'mesh' | 'light' | 'group' | 'gltf' | 'csg' | 'script' | 'gltf_part' | 'texture' | 'decal' | 'debris_emitter' | 'SUN' | 'MOON' | 'motor6d' | 'voxel_hotbar';
+  type: 'mesh' | 'light' | 'group' | 'gltf' | 'obj' | 'fbx' | 'csg' | 'script' | 'gltf_part' | 'texture' | 'decal' | 'debris_emitter' | 'SUN' | 'MOON' | 'motor6d' | 'voxel_hotbar';
   geometry?: 'box' | 'sphere' | 'plane' | 'cylinder' | 'cone' | 'wedge' | 'pyramid' | 'roundedCube' | 'roundedBox' | 'torus' | 'torusKnot' | 'ring' | 'doorway' | 'frame' | 'tornado' | 'smoke' | 'water' | 'sparks' | 'fire' | 'halfSphere' | 'star' | 'crescentMoon' | 'teardrop' | 'wingBlade' | 'curvedHorn' | 'taperedTorso' | 'forearm' | 'limb' | 'text' | string;
   primitiveType?: string;
   textString?: string;

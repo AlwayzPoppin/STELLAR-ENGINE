@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { useGLTF, useFBX } from '@react-three/drei';
+import { OBJLoader } from 'three-stdlib';
 import { TextureManager } from './TextureManager';
 
-export type StagingAssetType = 'model' | 'gltf' | 'fbx' | 'texture' | 'image';
+export type StagingAssetType = 'model' | 'gltf' | 'fbx' | 'obj' | 'texture' | 'image';
 export type StagingStatus = 'queued' | 'staging' | 'ready' | 'error';
 
 export interface StagingItem {
@@ -30,7 +31,7 @@ type ItemReadyListener = (item: StagingItem) => void;
  * AssetStagingManagerClass — Centralized Asset Preloading, Parsing, & Staging Queue
  *
  * Responsibilities:
- * 1. Pre-downloads and pre-parses GLTF/GLB models, FBX models, and textures off-screen.
+ * 1. Pre-downloads and pre-parses GLTF/GLB models, FBX models, OBJ models, and textures off-screen.
  * 2. Concurrency-throttled worker queue (max 3 in-flight) to prevent main-thread locking.
  * 3. In-flight promise deduplication across duplicate asset references.
  * 4. Staging status tracking and real-time progress callbacks for HUD indicators.
@@ -48,7 +49,7 @@ class AssetStagingManagerClass {
   private itemReadyListeners = new Set<ItemReadyListener>();
 
   /**
-   * Pre-stages an asset (GLTF, FBX, or Texture) into memory
+   * Pre-stages an asset (GLTF, FBX, OBJ, or Texture) into memory
    */
   public stageAsset(url: string, type: StagingAssetType = 'gltf'): Promise<void> {
     if (!url) return Promise.resolve();
@@ -56,7 +57,9 @@ class AssetStagingManagerClass {
     // Normalize type
     let normalizedType: StagingAssetType = type;
     const lowerUrl = url.toLowerCase();
-    if (lowerUrl.endsWith('.fbx')) {
+    if (lowerUrl.endsWith('.obj')) {
+      normalizedType = 'obj';
+    } else if (lowerUrl.endsWith('.fbx')) {
       normalizedType = 'fbx';
     } else if (lowerUrl.endsWith('.glb') || lowerUrl.endsWith('.gltf')) {
       normalizedType = 'gltf';
@@ -101,7 +104,14 @@ class AssetStagingManagerClass {
         this.emitProgress(item);
 
         try {
-          if (normalizedType === 'fbx') {
+          if (normalizedType === 'obj') {
+            if (typeof document !== 'undefined' && typeof OBJLoader !== 'undefined') {
+              const loader = new OBJLoader();
+              await new Promise<void>((res, rej) => {
+                loader.load(url, () => res(), undefined, (err) => rej(err));
+              });
+            }
+          } else if (normalizedType === 'fbx') {
             if (typeof useFBX !== 'undefined' && typeof (useFBX as any).preload === 'function') {
               (useFBX as any).preload(url);
             }

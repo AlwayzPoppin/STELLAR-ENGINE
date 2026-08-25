@@ -1,5 +1,5 @@
 import React, { Suspense, useRef, useState, useMemo, useEffect, useCallback } from 'react';
-import { Canvas, useFrame, useThree, events } from '@react-three/fiber';
+import { Canvas, useFrame, useThree, events, useLoader } from '@react-three/fiber';
 import {
   OrbitControls,
   Environment,
@@ -16,6 +16,7 @@ import {
   Stats,
   useTexture,
 } from '@react-three/drei';
+import { OBJLoader } from 'three-stdlib';
 import { Physics, RigidBody, CuboidCollider, BallCollider, useRapier } from '@react-three/rapier';
 import { Geometry, Base, Addition, Subtraction, Intersection } from '@react-three/csg';
 import { EffectComposer, Bloom, ToneMapping, Vignette, Outline, Selection, Select, GodRays } from '@react-three/postprocessing';
@@ -708,6 +709,72 @@ function FbxModel({ url, objId }: { url: string; objId?: string }) {
   return <primitive object={clonedScene} />;
 }
 
+function ObjModel({ url, objId }: { url: string; objId?: string }) {
+  const obj = useLoader(OBJLoader, url);
+  const clonedScene = useMemo(() => {
+    const clone = obj.clone();
+    clone.traverse((child: any) => {
+      if (objId) {
+        child.userData = { ...child.userData, id: objId };
+      }
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+
+        if (child.geometry && !child.geometry.attributes.normal) {
+          child.geometry.computeVertexNormals();
+        }
+
+        // Fast bounding sphere raycasting check
+        child.raycast = function (raycaster: THREE.Raycaster, intersects: any[]) {
+          if (!this.geometry) return;
+          if (!this.geometry.boundingSphere) {
+            this.geometry.computeBoundingSphere();
+          }
+          if (!this.geometry.boundingSphere) return;
+
+          const sphere = this.geometry.boundingSphere.clone();
+          sphere.applyMatrix4(this.matrixWorld);
+
+          if (raycaster.ray.intersectsSphere(sphere)) {
+            intersects.push({
+              distance: raycaster.ray.origin.distanceTo(sphere.center),
+              point: sphere.center.clone(),
+              object: this,
+            });
+          }
+        };
+
+        // Ensure default fallback standard material if none assigned
+        if (!child.material || (Array.isArray(child.material) && child.material.length === 0)) {
+          child.material = new THREE.MeshStandardMaterial({
+            color: '#d4d4d8',
+            roughness: 0.5,
+            metalness: 0.1,
+          });
+        }
+      }
+    });
+    return clone;
+  }, [obj, objId]);
+
+  return <primitive object={clonedScene} />;
+}
+
+export function isObjFormat(obj: SceneObject): boolean {
+  if ((obj.type as string) === 'obj') return true;
+  const name = (obj.name || '').toLowerCase();
+  const url = (obj.url || '').toLowerCase();
+  return name.endsWith('.obj') || url.includes('.obj') || url.startsWith('data:model/obj');
+}
+
+export function isFbxFormat(obj: SceneObject): boolean {
+  if ((obj.type as string) === 'fbx') return true;
+  const name = (obj.name || '').toLowerCase();
+  const url = (obj.url || '').toLowerCase();
+  return name.endsWith('.fbx') || url.includes('.fbx') || url.startsWith('data:model/fbx');
+}
+
 function CustomMaterial({ material }: { material: SceneObject['material'] }) {
   const wireframeMode = useStore((state) => state.wireframeMode);
 
@@ -1226,7 +1293,7 @@ const SceneNode = React.memo(function SceneNode({
           </mesh>
         )}
 
-        {obj.type === 'gltf' && obj.url && (
+        {isObjFormat(obj) && obj.url && (
           <ModelErrorBoundary
             assetName={obj.name}
             fallback={
@@ -1237,12 +1304,12 @@ const SceneNode = React.memo(function SceneNode({
             }
           >
             <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
-              <GltfModel url={obj.url} isPlayer={obj.id === 'obj_player'} objId={obj.id} />
+              <ObjModel url={obj.url} objId={obj.id} />
             </Suspense>
           </ModelErrorBoundary>
         )}
 
-        {(obj.type as string) === 'fbx' && obj.url && (
+        {isFbxFormat(obj) && !isObjFormat(obj) && obj.url && (
           <ModelErrorBoundary
             assetName={obj.name}
             fallback={
@@ -1254,6 +1321,22 @@ const SceneNode = React.memo(function SceneNode({
           >
             <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
               <FbxModel url={obj.url} objId={obj.id} />
+            </Suspense>
+          </ModelErrorBoundary>
+        )}
+
+        {(obj.type === 'gltf' || (!isObjFormat(obj) && !isFbxFormat(obj) && (obj.type as string) === 'model')) && obj.url && (
+          <ModelErrorBoundary
+            assetName={obj.name}
+            fallback={
+              <mesh>
+                <boxGeometry args={[1, 1, 1]} />
+                <meshBasicMaterial color="#ef4444" wireframe />
+              </mesh>
+            }
+          >
+            <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
+              <GltfModel url={obj.url} isPlayer={obj.id === 'obj_player'} objId={obj.id} />
             </Suspense>
           </ModelErrorBoundary>
         )}
@@ -1336,7 +1419,7 @@ const SceneNode = React.memo(function SceneNode({
     const type = obj.physicsColliderType || 'auto';
     if (type !== 'auto') return type as any;
     if (obj.type === 'mesh') return 'hull';
-    if (obj.type === 'gltf' || (obj.type as string) === 'fbx') return 'hull';
+    if (obj.type === 'gltf' || (obj.type as string) === 'fbx' || (obj.type as string) === 'obj' || isObjFormat(obj) || isFbxFormat(obj)) return 'hull';
     return undefined;
   };
 
@@ -2967,12 +3050,14 @@ export default function Viewport() {
     // Handle files dropped from desktop
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
-      if (file.name.endsWith('.glb') || file.name.endsWith('.gltf')) {
+      const lowerName = file.name.toLowerCase();
+      if (lowerName.endsWith('.glb') || lowerName.endsWith('.gltf') || lowerName.endsWith('.obj') || lowerName.endsWith('.fbx')) {
         const url = URL.createObjectURL(file);
+        const modelType = lowerName.endsWith('.obj') ? 'obj' : (lowerName.endsWith('.fbx') ? 'fbx' : 'gltf');
         addObject({
           id: `obj_${crypto.randomUUID()}`,
           name: file.name,
-          type: 'gltf',
+          type: modelType,
           url: url,
           position: [0, 0, 0],
           rotation: [0, 0, 0],
@@ -3001,10 +3086,12 @@ export default function Viewport() {
 
         if (asset.type === 'model' || asset.type === 'scene') {
           if (asset.url) {
+            const lower = (asset.name || asset.url || '').toLowerCase();
+            const modelType = lower.endsWith('.obj') ? 'obj' : (lower.endsWith('.fbx') ? 'fbx' : 'gltf');
             addObject({
               id: `obj_${crypto.randomUUID()}`,
               name: asset.name,
-              type: 'gltf',
+              type: modelType,
               url: asset.url,
               position: [0, 0, 0],
               rotation: [0, 0, 0],
