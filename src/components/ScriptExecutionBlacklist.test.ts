@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { failedScripts } from './Viewport';
+import { failedScripts, compiledScripts, clearCompiledScripts } from './Viewport';
 
 describe('Script Execution Loop and Blacklist Guard', () => {
   beforeEach(() => {
@@ -54,5 +54,32 @@ describe('Script Execution Loop and Blacklist Guard', () => {
     }
 
     expect(executed).toBe(true);
+  });
+
+  it('should cleanly manage compiledScripts Map and purge old references', () => {
+    clearCompiledScripts();
+
+    const scriptId = 'rotator_script';
+    const fn1 = new Function('self', 'delta', 'self.rotation.y += delta');
+    compiledScripts.set(scriptId, fn1);
+
+    expect(compiledScripts.has(scriptId)).toBe(true);
+    expect(compiledScripts.get(scriptId)).toBe(fn1);
+
+    // Update with new compilation
+    const fn2 = new Function('self', 'delta', 'self.rotation.x += delta');
+    compiledScripts.set(scriptId, fn2);
+    expect(compiledScripts.get(scriptId)).toBe(fn2);
+
+    // Delete / unmount
+    compiledScripts.delete(scriptId);
+    expect(compiledScripts.has(scriptId)).toBe(false);
+    expect(compiledScripts.get(scriptId)).toBeUndefined();
+
+    // Clear all
+    compiledScripts.set('s1', () => {});
+    compiledScripts.set('s2', () => {});
+    clearCompiledScripts();
+    expect(compiledScripts.size).toBe(0);
   });
 });

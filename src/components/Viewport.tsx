@@ -1001,8 +1001,13 @@ function renderGeometry(geometryType?: string, isWater?: boolean) {
   }
 }
 
-const compiledScripts: Record<string, Function> = {};
+export const compiledScripts = new Map<string, Function>();
 export const failedScripts = new Set<string>();
+
+export function clearCompiledScripts(): void {
+  compiledScripts.clear();
+  failedScripts.clear();
+}
 
 // Module-scoped scratch objects for zero-allocation per-frame physics & behavior updates
 const _tempTranslation = { x: 0, y: 0, z: 0 };
@@ -1048,22 +1053,46 @@ const SceneNode = React.memo(function SceneNode({
   const children = useMemo(() => objects.filter((o) => o.parentId === obj.id), [objects, obj.id]);
   const prevIsPlaying = useRef(isPlaying);
 
-  // Eagerly compile custom scripts outside of the render loop
+  // Eagerly compile custom scripts outside of the render loop with cleanup
   useEffect(() => {
     if (!obj.scripts || obj.scripts.length === 0) return;
     obj.scripts.forEach((scriptId) => {
       const script = assets.find((a) => a.id === scriptId);
       if (script && script.content) {
         try {
-          compiledScripts[scriptId] = new Function('self', 'delta', script.content);
+          const fn = new Function('self', 'delta', script.content);
+          compiledScripts.set(scriptId, fn);
           failedScripts.delete(scriptId); // Reset blacklisting when script is updated/recompiled
         } catch (e: any) {
           failedScripts.add(scriptId);
+          compiledScripts.delete(scriptId);
           console.error(`[Script Compile Error] ${scriptId}:`, e.message);
         }
+      } else {
+        compiledScripts.delete(scriptId);
+        failedScripts.delete(scriptId);
       }
     });
-  }, [obj.scripts, assets]);
+
+    return () => {
+      // Cleanup scripts that are no longer referenced by any scene objects
+      const allObjects = useStore.getState().objects;
+      const referencedScripts = new Set<string>();
+      for (const otherObj of allObjects) {
+        if (otherObj.id !== obj.id && otherObj.scripts) {
+          for (const sId of otherObj.scripts) referencedScripts.add(sId);
+        }
+      }
+      if (obj.scripts) {
+        for (const sId of obj.scripts) {
+          if (!referencedScripts.has(sId)) {
+            compiledScripts.delete(sId);
+            failedScripts.delete(sId);
+          }
+        }
+      }
+    };
+  }, [obj.scripts, obj.id, assets]);
 
   useEffect(() => {
     if (prevIsPlaying.current !== isPlaying) {
@@ -1190,7 +1219,7 @@ const SceneNode = React.memo(function SceneNode({
     if (obj.scripts && obj.scripts.length > 0) {
       obj.scripts.forEach((scriptId) => {
         if (failedScripts.has(scriptId)) return;
-        const fn = compiledScripts[scriptId];
+        const fn = compiledScripts.get(scriptId);
         if (fn) {
           try {
             fn(ref.current, delta);
