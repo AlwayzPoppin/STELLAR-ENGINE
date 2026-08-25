@@ -27,7 +27,9 @@ export default function GameplayLogicEditor() {
     gameVariables,
     setGameVariable,
     deleteGameVariable,
-    objects
+    objects,
+    executeScriptedEvent,
+    triggerScriptedEvents
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<'quests' | 'events' | 'variables'>('quests');
@@ -681,7 +683,20 @@ export default function GameplayLogicEditor() {
               {selectedEvent ? (
                 <div className="flex flex-col gap-4 max-w-[650px]">
                   <div className="border-b border-neutral-800 pb-3 flex flex-col gap-2">
-                    <span className="text-[14px] font-bold text-white">{selectedEvent.name}</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[14px] font-bold text-white">{selectedEvent.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          executeScriptedEvent(selectedEvent);
+                          toast.info('Test Run', `Executing "${selectedEvent.name}" action chain...`);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold transition-all cursor-pointer active:scale-95 shadow-sm"
+                      >
+                        <Play size={11} className="fill-current" />
+                        Test Run Event
+                      </button>
+                    </div>
                     <div className="flex items-center gap-2 text-text-secondary text-[10px]">
                       <span>Trigger: <strong className="text-emerald-400 font-mono">{selectedEvent.triggerType.toUpperCase()}</strong></span>
                       {selectedEvent.triggerTargetId && <span>Target ID: <strong className="text-white font-mono">{selectedEvent.triggerTargetId}</strong></span>}

@@ -1995,11 +1995,11 @@ export const useStore = create<EngineState>()(
         }),
       triggerScriptedEvents: (triggerType, triggerTargetId) => {
         const state = get();
-        if (!state.isPlaying) return;
-
         const events = state.scriptedEvents.filter((e) => {
-          if (e.triggerType !== triggerType) return false;
-          if (triggerTargetId && e.triggerTargetId !== triggerTargetId) return false;
+          if (e.triggerType !== triggerType && e.name !== triggerType && e.id !== triggerType) return false;
+          if (e.triggerTargetId && triggerTargetId && e.triggerTargetId !== triggerTargetId && e.id !== triggerTargetId && e.name !== triggerTargetId) {
+            return false;
+          }
           return true;
         });
 
@@ -2016,8 +2016,9 @@ export const useStore = create<EngineState>()(
           }
           state.setUltimateCharge(0);
         }
+        const wasPlaying = state.isPlaying;
         for (const action of event.actions) {
-          if (!get().isPlaying) break;
+          if (wasPlaying && !get().isPlaying) break;
 
           const params = action.params || {};
 
@@ -2083,6 +2084,95 @@ export const useStore = create<EngineState>()(
               const lastObj = updatedObjects[updatedObjects.length - 1];
               if (lastObj) {
                 get().updateObject(lastObj.id, { position: pos });
+              }
+              break;
+            }
+
+            case 'teleport': {
+              const targetId = params.targetId;
+              if (!targetId) break;
+              let pos: [number, number, number] = [0, 0, 0];
+              if (Array.isArray(params.position)) {
+                pos = params.position as [number, number, number];
+              } else if (typeof params.position === 'string') {
+                try {
+                  pos = JSON.parse(params.position);
+                } catch {
+                  const parts = params.position.split(',').map((n: string) => parseFloat(n.trim()));
+                  if (parts.length === 3 && parts.every((n: number) => !isNaN(n))) {
+                    pos = parts as [number, number, number];
+                  }
+                }
+              } else if (params.x !== undefined || params.y !== undefined || params.z !== undefined) {
+                pos = [Number(params.x) || 0, Number(params.y) || 0, Number(params.z) || 0];
+              }
+              get().updateObject(targetId, { position: pos });
+              toast.info(`Teleported ${targetId} to [${pos.join(', ')}]`);
+              break;
+            }
+
+            case 'trigger_animation': {
+              const targetId = params.targetId;
+              const animName = params.animationName || params.clipName;
+              if (targetId && animName) {
+                get().updateObject(targetId, { activeAnimation: animName });
+              }
+              break;
+            }
+
+            case 'give_item': {
+              const itemName = params.itemName || 'Item';
+              const amount = Number(params.amount) || 1;
+              const varKey = `item_${itemName.toLowerCase().replace(/\s+/g, '_')}`;
+              const currentAmount = (get().gameVariables[varKey] as number) || 0;
+              get().setGameVariable(varKey, currentAmount + amount);
+              toast.success(`Received ${amount}x ${itemName}!`);
+              break;
+            }
+
+            case 'complete_objective': {
+              const questId = params.questId;
+              const objIndex = params.objectiveIndex !== undefined ? Number(params.objectiveIndex) : undefined;
+              const objId = params.objectiveId;
+              if (questId) {
+                const q = get().quests.find((quest) => quest.id === questId);
+                if (q) {
+                  const newObjs = [...q.objectives];
+                  if (objIndex !== undefined && newObjs[objIndex]) {
+                    newObjs[objIndex] = {
+                      ...newObjs[objIndex],
+                      currentCount: newObjs[objIndex].targetCount,
+                      completed: true,
+                    };
+                  } else if (objId) {
+                    const idx = newObjs.findIndex((o) => o.id === objId);
+                    if (idx >= 0) {
+                      newObjs[idx] = {
+                        ...newObjs[idx],
+                        currentCount: newObjs[idx].targetCount,
+                        completed: true,
+                      };
+                    }
+                  } else if (newObjs.length > 0) {
+                    const idx = newObjs.findIndex((o) => !o.completed);
+                    if (idx >= 0) {
+                      newObjs[idx] = {
+                        ...newObjs[idx],
+                        currentCount: newObjs[idx].targetCount,
+                        completed: true,
+                      };
+                    }
+                  }
+                  const allDone = newObjs.every((o) => o.completed || o.currentCount >= o.targetCount);
+                  get().updateQuest(questId, {
+                    objectives: newObjs,
+                    status: allDone ? 'completed' : q.status,
+                  });
+                  if (allDone && q.status !== 'completed') {
+                    get().triggerScriptedEvents('on_quest_complete', questId);
+                    toast.success('Quest Completed!', `${q.title} has been completed.`);
+                  }
+                }
               }
               break;
             }
