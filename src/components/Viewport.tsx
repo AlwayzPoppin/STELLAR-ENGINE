@@ -1245,7 +1245,7 @@ const SceneNode = React.memo(function SceneNode({
       }}
     >
       <>
-        {obj.type !== 'gltf' && obj.type !== 'light' && obj.type !== 'group' && obj.type !== 'csg' && (() => {
+        {!isObjFormat(obj) && !isFbxFormat(obj) && !['gltf', 'obj', 'fbx', 'light', 'group', 'csg', 'script', 'texture', 'decal', 'motor6d', 'voxel_hotbar', 'SUN', 'MOON'].includes(obj.type) && !obj.url && (() => {
           const isObjWater = !!(obj.material && (
             obj.material.map === 'water' ||
             obj.material.normalMap === 'water' ||
@@ -2989,8 +2989,8 @@ export default function Viewport() {
   // Background asset pre-staging for any 3D models in current scene
   useEffect(() => {
     objects.forEach((obj) => {
-      if (obj.url && (obj.type === 'gltf' || (obj.type as string) === 'fbx')) {
-        AssetStagingManager.stageAsset(obj.url, obj.type as any).catch(() => {});
+      if (obj.url && (obj.type === 'gltf' || (obj.type as string) === 'fbx' || (obj.type as string) === 'obj' || isObjFormat(obj) || isFbxFormat(obj))) {
+        AssetStagingManager.stageAsset(obj.url, (obj.type as any) || 'gltf').catch(() => {});
       }
     });
   }, [objects]);
