@@ -41,4 +41,22 @@ describe('TimelinePanel track optimization and calculations', () => {
     expect(keyframeEntries).toEqual([0, 24, 48]);
     expect(keyframeEntries.length).toBe(3);
   });
+
+  it('should parse and clamp manual frame inputs, preventing negative values', () => {
+    const maxFrames = 60;
+    const parseFrame = (input: string) => {
+      const raw = input.trim();
+      if (raw === '' || raw === '-') return 0;
+      const val = parseInt(raw, 10);
+      return isNaN(val) ? 0 : Math.max(0, Math.min(maxFrames, val));
+    };
+
+    expect(parseFrame('-15')).toBe(0);
+    expect(parseFrame('-1')).toBe(0);
+    expect(parseFrame('-')).toBe(0);
+    expect(parseFrame('')).toBe(0);
+    expect(parseFrame('abc')).toBe(0);
+    expect(parseFrame('30')).toBe(30);
+    expect(parseFrame('100')).toBe(60);
+  });
 });

@@ -260,6 +260,7 @@ export function AssetCard({
 }) {
   const [hoverTimer, setHoverTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const isHoveringRef = useRef(false);
   const activePreviewAsset = useStore((s) => s.activePreviewAsset);
   const isPickingAsset = useStore((s) => s.isPickingAsset);
   const setIsPickingAsset = useStore((s) => s.setIsPickingAsset);
@@ -308,6 +309,7 @@ export function AssetCard({
 
   const handlePointerEnter = () => {
     if (hoverTimer) clearTimeout(hoverTimer);
+    isHoveringRef.current = true;
 
     // Warm asset in background staging queue on hover
     if (asset.url) {
@@ -315,6 +317,8 @@ export function AssetCard({
     }
 
     const timer = setTimeout(() => {
+      // Guard: only dispatch preview if mouse is still over this specific card
+      if (!isHoveringRef.current) return;
       if (cardRef.current) {
         const rect = cardRef.current.getBoundingClientRect();
         useStore.getState().setActivePreviewAsset(asset, {
@@ -330,6 +334,7 @@ export function AssetCard({
   };
 
   const handlePointerLeave = () => {
+    isHoveringRef.current = false;
     if (hoverTimer) {
       clearTimeout(hoverTimer);
       setHoverTimer(null);
@@ -341,6 +346,7 @@ export function AssetCard({
   };
 
   const clearHoverState = () => {
+    isHoveringRef.current = false;
     if (hoverTimer) {
       clearTimeout(hoverTimer);
       setHoverTimer(null);

@@ -506,10 +506,13 @@ export default function TimelinePanel() {
   };
 
   const handleFrameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    if (!isNaN(val)) {
-      setCurrentFrame(Math.max(0, Math.min(maxFrames, val)));
+    const raw = e.target.value.trim();
+    if (raw === '' || raw === '-') {
+      setCurrentFrame(0);
+      return;
     }
+    const val = parseInt(raw, 10);
+    setCurrentFrame(isNaN(val) ? 0 : Math.max(0, Math.min(maxFrames, val)));
   };
 
   const stepFrame = (amount: number) => {
