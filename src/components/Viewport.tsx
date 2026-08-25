@@ -1250,7 +1250,7 @@ const SceneNode = React.memo(function SceneNode({
       }}
     >
       <>
-        {!isObjFormat(obj) && !isFbxFormat(obj) && !['gltf', 'obj', 'fbx', 'light', 'group', 'csg', 'script', 'texture', 'decal', 'motor6d', 'voxel_hotbar', 'SUN', 'MOON'].includes(obj.type) && !obj.url && (() => {
+        {!isObjFormat(obj) && !isFbxFormat(obj) && !['gltf', 'obj', 'fbx', 'light', 'group', 'csg', 'script', 'texture', 'decal', 'motor6d', 'SUN', 'MOON'].includes(obj.type) && !obj.url && (() => {
           const isObjWater = !!(obj.material && (
             obj.material.map === 'water' ||
             obj.material.normalMap === 'water' ||

@@ -719,32 +719,20 @@ export function routeIntent(query: string, ctx: RouterContext): AssistantMessage
           items: customItems,
         };
 
-        const existingHotbar = (ctx.objects || []).find((o: any) => o.type === 'voxel_hotbar');
-        if (existingHotbar) {
-          textContent = `I will configure your Voxel Hotbar with **${themeLabel}** (${customItems.length} tool slots).`;
-          label = `Configure Hotbar: ${themeLabel}`;
-          actions.push({
-            targetId: existingHotbar.id,
-            targetName: existingHotbar.name,
-            before: { voxelHotbarProps: existingHotbar.voxelHotbarProps },
-            after: { voxelHotbarProps: newProps },
-          });
-        } else {
-          textContent = `I will spawn a new Voxel Hotbar HUD and configure it with **${themeLabel}** (${customItems.length} tool slots).`;
-          label = `Create & Configure Hotbar: ${themeLabel}`;
-          actions.push({
-            targetId: `hotbar_${Date.now()}`,
-            targetName: 'Voxel Block Hotbar (HUD)',
-            before: {},
-            after: {},
-            cmd: 'add_object',
-            params: {
-              type: 'voxel_hotbar',
-              customName: `Voxel Hotbar (${themeLabel})`,
-              voxelHotbarProps: newProps,
-            },
-          });
-        }
+        textContent = `I will configure your Voxel Hotbar HUD with **${themeLabel}** (${customItems.length} tool slots).`;
+        label = `Configure Hotbar: ${themeLabel}`;
+        actions.push({
+          targetId: 'voxel_hotbar',
+          targetName: 'Voxel Block Hotbar (HUD)',
+          before: {},
+          after: {},
+          cmd: 'add_object',
+          params: {
+            type: 'voxel_hotbar',
+            customName: `Voxel Hotbar (${themeLabel})`,
+            voxelHotbarProps: newProps,
+          },
+        });
       } else {
         textContent = `I will create a scripted event block for your level progression.`;
         label = `Create Scripted Event`;

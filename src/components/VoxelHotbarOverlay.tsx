@@ -1,12 +1,9 @@
 import React, { useEffect } from 'react';
-import { useStore, SceneObject } from '../store/useStore';
-import { Layers, Box, Triangle, Cylinder, Circle, Square } from 'lucide-react';
+import { useStore, VoxelHotbarProps } from '../store/useStore';
+import { Box, Triangle, Cylinder, Circle } from 'lucide-react';
 
 export default function VoxelHotbarOverlay() {
-  const { objects, isPlaying, selectedIds, updateObject, gameplaySettings } = useStore();
-
-  // Find active voxel hotbar object in scene
-  const hotbarObj = objects.find((o) => o.type === 'voxel_hotbar');
+  const { isPlaying, gameplaySettings, voxelHotbar, updateVoxelHotbar } = useStore();
 
   return (
     <>
@@ -41,15 +38,23 @@ export default function VoxelHotbarOverlay() {
         </div>
       )}
 
-      <HotbarBarContent hotbarObj={hotbarObj} isPlaying={isPlaying} selectedIds={selectedIds} updateObject={updateObject} />
+      <HotbarBarContent voxelHotbar={voxelHotbar} isPlaying={isPlaying} updateVoxelHotbar={updateVoxelHotbar} />
     </>
   );
 }
 
-function HotbarBarContent({ hotbarObj, isPlaying, selectedIds, updateObject }: any) {
-  if (!isPlaying || !hotbarObj || !hotbarObj.voxelHotbarProps) return null;
+function HotbarBarContent({
+  voxelHotbar,
+  isPlaying,
+  updateVoxelHotbar,
+}: {
+  voxelHotbar: VoxelHotbarProps;
+  isPlaying: boolean;
+  updateVoxelHotbar: (updates: Partial<VoxelHotbarProps>) => void;
+}) {
+  if (!isPlaying || !voxelHotbar || !voxelHotbar.items) return null;
 
-  const props = hotbarObj.voxelHotbarProps;
+  const props = voxelHotbar;
 
   // Keyboard 1-9 & Mouse Wheel Slot Switching Hook
   useEffect(() => {
@@ -58,24 +63,14 @@ function HotbarBarContent({ hotbarObj, isPlaying, selectedIds, updateObject }: a
     const handleKeyDown = (e: KeyboardEvent) => {
       const keyNum = parseInt(e.key, 10);
       if (!isNaN(keyNum) && keyNum >= 1 && keyNum <= props.slotCount) {
-        updateObject(hotbarObj.id, {
-          voxelHotbarProps: {
-            ...props,
-            activeSlotIndex: keyNum - 1,
-          },
-        });
+        updateVoxelHotbar({ activeSlotIndex: keyNum - 1 });
       }
     };
 
     const handleWheel = (e: WheelEvent) => {
       const direction = e.deltaY > 0 ? 1 : -1;
       const nextIndex = (props.activeSlotIndex + direction + props.slotCount) % props.slotCount;
-      updateObject(hotbarObj.id, {
-        voxelHotbarProps: {
-          ...props,
-          activeSlotIndex: nextIndex,
-        },
-      });
+      updateVoxelHotbar({ activeSlotIndex: nextIndex });
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -84,7 +79,7 @@ function HotbarBarContent({ hotbarObj, isPlaying, selectedIds, updateObject }: a
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('wheel', handleWheel);
     };
-  }, [isPlaying, props, hotbarObj.id, updateObject]);
+  }, [isPlaying, props.slotCount, props.activeSlotIndex, updateVoxelHotbar]);
 
   const activeItem = props.items[props.activeSlotIndex];
 
@@ -111,14 +106,7 @@ function HotbarBarContent({ hotbarObj, isPlaying, selectedIds, updateObject }: a
           return (
             <button
               key={item.id || idx}
-              onClick={() => {
-                updateObject(hotbarObj.id, {
-                  voxelHotbarProps: {
-                    ...props,
-                    activeSlotIndex: idx,
-                  },
-                });
-              }}
+              onClick={() => updateVoxelHotbar({ activeSlotIndex: idx })}
               className={`relative w-12 h-12 rounded-xl flex flex-col items-center justify-center transition-all duration-150 cursor-pointer group ${
                 isActive
                   ? 'bg-gradient-to-b from-sky-500/30 to-blue-600/40 border-2 border-sky-400 shadow-[0_0_15px_rgba(56,189,248,0.5)] scale-105'

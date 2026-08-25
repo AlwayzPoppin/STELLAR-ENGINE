@@ -149,7 +149,7 @@ export interface VoxelHotbarProps {
 export type SceneObject = {
   id: string;
   name: string;
-  type: 'mesh' | 'light' | 'group' | 'gltf' | 'obj' | 'fbx' | 'csg' | 'script' | 'gltf_part' | 'texture' | 'decal' | 'debris_emitter' | 'SUN' | 'MOON' | 'motor6d' | 'voxel_hotbar';
+  type: 'mesh' | 'light' | 'group' | 'gltf' | 'obj' | 'fbx' | 'csg' | 'script' | 'gltf_part' | 'texture' | 'decal' | 'debris_emitter' | 'SUN' | 'MOON' | 'motor6d';
   geometry?: 'box' | 'sphere' | 'plane' | 'cylinder' | 'cone' | 'wedge' | 'pyramid' | 'roundedCube' | 'roundedBox' | 'torus' | 'torusKnot' | 'ring' | 'doorway' | 'frame' | 'tornado' | 'smoke' | 'water' | 'sparks' | 'fire' | 'halfSphere' | 'star' | 'crescentMoon' | 'teardrop' | 'wingBlade' | 'curvedHorn' | 'taperedTorso' | 'forearm' | 'limb' | 'text' | string;
   primitiveType?: string;
   textString?: string;
@@ -854,6 +854,8 @@ export interface StoreState {
   updateEnginePreferences: (updates: Partial<EnginePreferences>) => void;
   gameplaySettings: GameplaySettings;
   updateGameplaySettings: (updates: Partial<GameplaySettings>) => void;
+  voxelHotbar: VoxelHotbarProps;
+  updateVoxelHotbar: (updates: Partial<VoxelHotbarProps>) => void;
   toggleSidebar: () => void;
   toggleBottomPanel: () => void;
   toggleInspector: () => void;
@@ -2376,28 +2378,10 @@ export const useStore = create<EngineState>()(
           for (const patch of msg.actions) {
             if (patch.cmd === 'add_object' && patch.params) {
               const { type, customName, color, voxelHotbarProps } = patch.params;
-              if (type === 'voxel_hotbar') {
-                const hotbarId = `hotbar_${crypto.randomUUID().substring(0, 8)}`;
-                get().addObject({
-                  id: hotbarId,
-                  name: customName || 'Voxel Block Hotbar (HUD)',
-                  type: 'voxel_hotbar',
-                  position: [0, 0, 0],
-                  rotation: [0, 0, 0],
-                  scale: [1, 1, 1],
-                  voxelHotbarProps: voxelHotbarProps || {
-                    slotCount: 9,
-                    activeSlotIndex: 0,
-                    showKeybinds: true,
-                    styleVariant: 'minecraft',
-                    autoHideInEditMode: false,
-                    enableVoxelMining: true,
-                    enableVoxelPlacing: true,
-                    miningRange: 8.0,
-                    placeCooldownMs: 150,
-                    items: [],
-                  },
-                });
+              if (type === 'voxel_hotbar' || voxelHotbarProps) {
+                if (voxelHotbarProps) {
+                  get().updateVoxelHotbar(voxelHotbarProps);
+                }
               } else {
                 get().addPrimitive(type || 'cube');
                 const objs = get().objects;
@@ -2406,7 +2390,6 @@ export const useStore = create<EngineState>()(
                   const updates: Partial<SceneObject> = {};
                   if (customName) updates.name = customName;
                   if (color) updates.material = { ...newObj.material, color };
-                  if (voxelHotbarProps) updates.voxelHotbarProps = voxelHotbarProps;
                   if (Object.keys(updates).length > 0) {
                     get().updateObject(newObj.id, updates);
                   }
@@ -4536,6 +4519,32 @@ export const useStore = create<EngineState>()(
         set((state) => ({
           gameplaySettings: { ...state.gameplaySettings, ...updates },
         })),
+      voxelHotbar: {
+        slotCount: 9,
+        activeSlotIndex: 0,
+        showKeybinds: true,
+        styleVariant: 'minecraft',
+        autoHideInEditMode: false,
+        enableVoxelMining: true,
+        enableVoxelPlacing: true,
+        miningRange: 8.0,
+        placeCooldownMs: 150,
+        items: [
+          { id: 'item_1', name: 'Grass Block', geometry: 'box', color: '#44aa44', material: 'Grass' },
+          { id: 'item_2', name: 'Dirt Block', geometry: 'box', color: '#885522', material: 'Dirt' },
+          { id: 'item_3', name: 'Stone Block', geometry: 'box', color: '#777777', material: 'Slate' },
+          { id: 'item_4', name: 'Oak Wood', geometry: 'box', color: '#664422', material: 'Wood' },
+          { id: 'item_5', name: 'Leaves Block', geometry: 'box', color: '#227722', material: 'Grass' },
+          { id: 'item_6', name: 'Red Brick', geometry: 'box', color: '#aa3322', material: 'Plastic' },
+          { id: 'item_7', name: 'Sand Block', geometry: 'box', color: '#ddcc77', material: 'Sand' },
+          { id: 'item_8', name: 'Glass Block', geometry: 'box', color: '#88ddee', material: 'Glass' },
+          { id: 'item_9', name: 'Voxel Pyramid', geometry: 'pyramid', color: '#cc44bb', material: 'SmoothPlastic' },
+        ],
+      },
+      updateVoxelHotbar: (updates) =>
+        set((state) => ({
+          voxelHotbar: { ...state.voxelHotbar, ...updates },
+        })),
       setSelectedIds: (ids) => set({ selectedIds: ids }),
       marqueeSelectedIds: [],
       setMarqueeSelectedIds: (ids) => set({ marqueeSelectedIds: ids }),
@@ -4902,38 +4911,8 @@ export const useStore = create<EngineState>()(
           return;
         }
         if (type === 'voxel_hotbar') {
-          const hotbarId = `hotbar_${crypto.randomUUID().substring(0, 8)}`;
-          state.addObject({
-            id: hotbarId,
-            name: 'Voxel Block Hotbar (HUD)',
-            type: 'voxel_hotbar',
-            position: [0, 0, 0],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-            voxelHotbarProps: {
-              slotCount: 9,
-              activeSlotIndex: 0,
-              showKeybinds: true,
-              styleVariant: 'minecraft',
-              autoHideInEditMode: false,
-              enableVoxelMining: true,
-              enableVoxelPlacing: true,
-              miningRange: 8.0,
-              placeCooldownMs: 150,
-              items: [
-                { id: 'item_1', name: 'Grass Block', geometry: 'box', color: '#44aa44', material: 'Grass' },
-                { id: 'item_2', name: 'Dirt Block', geometry: 'box', color: '#885522', material: 'Dirt' },
-                { id: 'item_3', name: 'Stone Block', geometry: 'box', color: '#777777', material: 'Slate' },
-                { id: 'item_4', name: 'Oak Wood', geometry: 'box', color: '#664422', material: 'Wood' },
-                { id: 'item_5', name: 'Leaves Block', geometry: 'box', color: '#227722', material: 'Grass' },
-                { id: 'item_6', name: 'Red Brick', geometry: 'box', color: '#aa3322', material: 'Plastic' },
-                { id: 'item_7', name: 'Sand Block', geometry: 'box', color: '#ddcc77', material: 'Sand' },
-                { id: 'item_8', name: 'Glass Block', geometry: 'box', color: '#88ddee', material: 'Glass' },
-                { id: 'item_9', name: 'Voxel Pyramid', geometry: 'pyramid', color: '#cc44bb', material: 'SmoothPlastic' },
-              ],
-            },
-          });
-          toast.success('Voxel Hotbar Inserted', 'Added insertable Voxel HUD to scene!');
+          state.selectObject('gameplay_settings');
+          toast.success('Voxel Hotbar HUD Configured', 'Opened Gameplay Settings to configure Voxel HUD overlay.');
           return;
         }
         if (type === 'group') {

@@ -458,6 +458,98 @@ export default function InspectorPanel() {
               </div>
             </div>
           </Section>
+
+          {/* Voxel Block Hotbar (HUD) Configuration */}
+          {(() => {
+            const voxelHotbar = useStore.getState().voxelHotbar;
+            const updateVoxelHotbar = useStore.getState().updateVoxelHotbar;
+            if (!voxelHotbar) return null;
+
+            return (
+              <Section title="Voxel Block Hotbar (HUD)" icon={Layers} colorClass="text-cyan-400">
+                <div className="space-y-3 p-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-neutral-400">Slot Count (1-9)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={9}
+                      value={voxelHotbar.slotCount}
+                      onChange={(e) => {
+                        const val = Math.min(9, Math.max(1, parseInt(e.target.value, 10) || 9));
+                        updateVoxelHotbar({ slotCount: val });
+                      }}
+                      className="w-16 bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-right text-xs text-white"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-neutral-400">Show Keybind Hints (1-9)</span>
+                    <input
+                      type="checkbox"
+                      checked={voxelHotbar.showKeybinds}
+                      onChange={(e) => {
+                        updateVoxelHotbar({ showKeybinds: e.target.checked });
+                      }}
+                      className="rounded border-neutral-800 bg-neutral-900 text-sky-500 focus:ring-0 cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="text-xs space-y-1.5 pt-2 border-t border-neutral-800/60">
+                    <span className="font-bold text-neutral-300 block mb-1">Configured Hotbar Items ({voxelHotbar.items.length})</span>
+                    {voxelHotbar.items.map((item, idx) => (
+                      <div key={item.id || idx} className="flex items-center gap-2 bg-neutral-900/60 p-2 rounded-lg border border-neutral-800">
+                        <span className="w-4 font-mono font-bold text-neutral-500 text-[10px]">{idx + 1}</span>
+                        <input
+                          type="color"
+                          value={item.color}
+                          onChange={(e) => {
+                            const newItems = [...voxelHotbar.items];
+                            newItems[idx] = { ...newItems[idx], color: e.target.value };
+                            updateVoxelHotbar({ items: newItems });
+                          }}
+                          className="w-6 h-6 rounded cursor-pointer border border-white/20 bg-transparent p-0"
+                        />
+                        <input
+                          type="text"
+                          value={item.name}
+                          onChange={(e) => {
+                            const newItems = [...voxelHotbar.items];
+                            newItems[idx] = { ...newItems[idx], name: e.target.value };
+                            updateVoxelHotbar({ items: newItems });
+                          }}
+                          className="flex-1 bg-transparent text-xs text-white border-b border-transparent hover:border-neutral-700 focus:border-sky-500 focus:outline-none px-1"
+                        />
+                        <select
+                          value={item.geometry}
+                          onChange={(e) => {
+                            const newItems = [...voxelHotbar.items];
+                            newItems[idx] = { ...newItems[idx], geometry: e.target.value as any };
+                            updateVoxelHotbar({ items: newItems });
+                          }}
+                          className="bg-neutral-800 text-[10px] text-neutral-300 rounded px-1.5 py-0.5 border border-neutral-700"
+                        >
+                          <option value="box">Cube</option>
+                          <option value="pyramid">Pyramid</option>
+                          <option value="cone">Cone</option>
+                          <option value="cylinder">Cylinder</option>
+                          <option value="sphere">Sphere</option>
+                          <option value="wedge">Wedge</option>
+                          <option value="torus">Torus</option>
+                          <option value="roundedCube">Rounded Cube</option>
+                          <option value="teardrop">Teardrop / Egg</option>
+                          <option value="wingBlade">Wing / Fin / Scythe</option>
+                          <option value="curvedHorn">Curved Horn / Claw</option>
+                          <option value="taperedTorso">Tapered Torso / Pelvis</option>
+                          <option value="forearm">Forearm / Leg Limb</option>
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Section>
+            );
+          })()}
         </div>
       </div>
     );
@@ -1392,108 +1484,6 @@ export default function InspectorPanel() {
             </div>
           )}
         </Section>
-
-        {/* Voxel Block Hotbar Section */}
-        {selectedObj.type === 'voxel_hotbar' && selectedObj.voxelHotbarProps && (
-          <Section title="Voxel Block Hotbar (HUD)" icon={Layers} colorClass="text-cyan-400">
-            <div className="space-y-3 p-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-neutral-400">Slot Count (1-9)</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={9}
-                  value={selectedObj.voxelHotbarProps.slotCount}
-                  onChange={(e) => {
-                    const val = Math.min(9, Math.max(1, parseInt(e.target.value, 10) || 9));
-                    updateObject(selectedObj.id, {
-                      voxelHotbarProps: {
-                        ...selectedObj.voxelHotbarProps!,
-                        slotCount: val,
-                      },
-                    });
-                  }}
-                  className="w-16 bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-right text-xs text-white"
-                />
-              </div>
-
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-neutral-400">Show Keybind Hints (1-9)</span>
-                <input
-                  type="checkbox"
-                  checked={selectedObj.voxelHotbarProps.showKeybinds}
-                  onChange={(e) => {
-                    updateObject(selectedObj.id, {
-                      voxelHotbarProps: {
-                        ...selectedObj.voxelHotbarProps!,
-                        showKeybinds: e.target.checked,
-                      },
-                    });
-                  }}
-                  className="rounded border-neutral-800 bg-neutral-900 text-sky-500 focus:ring-0 cursor-pointer"
-                />
-              </div>
-
-              <div className="text-xs space-y-1.5 pt-2 border-t border-neutral-800/60">
-                <span className="font-bold text-neutral-300 block mb-1">Configured Hotbar Items ({selectedObj.voxelHotbarProps.items.length})</span>
-                {selectedObj.voxelHotbarProps.items.map((item, idx) => (
-                  <div key={item.id || idx} className="flex items-center gap-2 bg-neutral-900/60 p-2 rounded-lg border border-neutral-800">
-                    <span className="w-4 font-mono font-bold text-neutral-500 text-[10px]">{idx + 1}</span>
-                    <input
-                      type="color"
-                      value={item.color}
-                      onChange={(e) => {
-                        const newItems = [...selectedObj.voxelHotbarProps!.items];
-                        newItems[idx] = { ...newItems[idx], color: e.target.value };
-                        updateObject(selectedObj.id, {
-                          voxelHotbarProps: { ...selectedObj.voxelHotbarProps!, items: newItems },
-                        });
-                      }}
-                      className="w-6 h-6 rounded cursor-pointer border border-white/20 bg-transparent p-0"
-                    />
-                    <input
-                      type="text"
-                      value={item.name}
-                      onChange={(e) => {
-                        const newItems = [...selectedObj.voxelHotbarProps!.items];
-                        newItems[idx] = { ...newItems[idx], name: e.target.value };
-                        updateObject(selectedObj.id, {
-                          voxelHotbarProps: { ...selectedObj.voxelHotbarProps!, items: newItems },
-                        });
-                      }}
-                      className="flex-1 bg-transparent text-xs text-white border-b border-transparent hover:border-neutral-700 focus:border-sky-500 focus:outline-none px-1"
-                    />
-                    <select
-                      value={item.geometry}
-                      onChange={(e) => {
-                        const newItems = [...selectedObj.voxelHotbarProps!.items];
-                        newItems[idx] = { ...newItems[idx], geometry: e.target.value as any };
-                        updateObject(selectedObj.id, {
-                          voxelHotbarProps: { ...selectedObj.voxelHotbarProps!, items: newItems },
-                        });
-                      }}
-                      className="bg-neutral-800 text-[10px] text-neutral-300 rounded px-1.5 py-0.5 border border-neutral-700"
-                    >
-                      <option value="box">Cube</option>
-                      <option value="pyramid">Pyramid</option>
-                      <option value="cone">Cone</option>
-                      <option value="cylinder">Cylinder</option>
-                      <option value="sphere">Sphere</option>
-                      <option value="wedge">Wedge</option>
-                      <option value="torus">Torus</option>
-                      <option value="roundedCube">Rounded Cube</option>
-                      <option value="teardrop">Teardrop / Egg</option>
-                      <option value="wingBlade">Wing / Fin / Scythe</option>
-                      <option value="curvedHorn">Curved Horn / Claw</option>
-                      <option value="taperedTorso">Tapered Torso / Pelvis</option>
-                      <option value="forearm">Forearm / Leg Limb</option>
-                    </select>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Section>
-        )}
 
         {(selectedObj.type === 'mesh' || selectedObj.type === 'gltf' || (selectedObj.type as string) === 'fbx') && (
           <Section title="Asset Source" icon={Layers} colorClass="text-sky-400">

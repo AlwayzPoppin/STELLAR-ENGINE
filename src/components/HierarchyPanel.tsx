@@ -30,8 +30,6 @@ import {
 const getIcon = (geom?: string, type?: string) => {
   if (type === 'script')
     return <Code2 className="w-[14px] h-[14px] text-yellow-400" style={{ filter: 'drop-shadow(0 0 2px #facc15)' }} />;
-  if (type === 'voxel_hotbar')
-    return <Layers className="w-[14px] h-[14px] text-cyan-400" style={{ filter: 'drop-shadow(0 0 2px #06b6d4)' }} />;
   if (type === 'light')
     return (
       <Lightbulb className="w-[14px] h-[14px] text-yellow-500" style={{ filter: 'drop-shadow(0 0 2px #eab308)' }} />
@@ -721,7 +719,6 @@ export default function HierarchyPanel() {
       o.type !== 'light' &&
       o.type !== 'SUN' &&
       o.type !== 'MOON' &&
-      o.type !== 'voxel_hotbar' &&
       o.id !== 'sun-light' &&
       o.id !== 'moon-light' &&
       o.id !== 'starter_player' &&
@@ -732,7 +729,7 @@ export default function HierarchyPanel() {
   // StarterGui (HUD & UI): GUI/HUD elements
   const starterGuiChildren = objects.filter(
     (o) =>
-      (o.parentId === 'starter_gui' || o.type === 'voxel_hotbar') &&
+      o.parentId === 'starter_gui' &&
       (searchQuery ? o.name.toLowerCase().includes(searchQuery.toLowerCase()) : true),
   );
 
