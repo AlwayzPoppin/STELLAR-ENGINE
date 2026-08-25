@@ -49,6 +49,7 @@ import {
   Type,
   BoxSelect,
   LayoutTemplate,
+  Boxes,
 } from 'lucide-react';
 import { useStore as useZustandStore } from 'zustand';
 import { useStore } from '../store/useStore';
@@ -86,6 +87,8 @@ function TopBar() {
     toggleOverlays,
     wireframeMode,
     toggleWireframeMode,
+    showPhysicsDebug,
+    togglePhysicsDebug,
     activeTool,
     setActiveTool,
     undo,
@@ -703,6 +706,21 @@ function TopBar() {
             title="Toggle Wireframe Mode (Shift+H)"
           >
             <Layers size={14} />
+          </button>
+
+          <div className="h-4 w-px bg-neutral-800/60 mx-0.5" />
+
+          <button
+            onClick={togglePhysicsDebug}
+            className={`p-1.5 transition-all duration-150 cursor-pointer rounded-md border ${
+              showPhysicsDebug
+                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 shadow-[0_0_10px_rgba(16,185,129,0.25)] ring-1 ring-emerald-500/30'
+                : 'text-neutral-400 hover:text-neutral-200 border-transparent hover:bg-neutral-800/60'
+            }`}
+            title={showPhysicsDebug ? 'Hide Physics Colliders & Hitboxes (Rapier)' : 'Show Visual Hitbox / Collider Debugger (Rapier)'}
+            aria-pressed={showPhysicsDebug}
+          >
+            <Boxes size={14} className={showPhysicsDebug ? 'text-emerald-400 animate-pulse' : ''} />
           </button>
 
           <div className="h-4 w-px bg-neutral-800/60 mx-0.5" />

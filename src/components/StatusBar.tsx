@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cloud, CloudCheck, Loader2, AlertCircle, Move, RotateCw, Scaling, MousePointer, Layers, Cpu } from 'lucide-react';
+import { Cloud, CloudCheck, Loader2, AlertCircle, Move, RotateCw, Scaling, MousePointer, Layers, Cpu, Boxes } from 'lucide-react';
 import { SerializationManager, AutosaveState } from '../utils/SerializationManager';
 import { useStore } from '../store/useStore';
 
@@ -14,6 +14,8 @@ export function StatusBar(): React.JSX.Element {
   const workspaceMode = useStore((s) => s.workspaceMode);
   const snapGrid = useStore((s) => s.snapGrid);
   const snapValue = useStore((s) => s.snapValue);
+  const showPhysicsDebug = useStore((s) => s.showPhysicsDebug);
+  const togglePhysicsDebug = useStore((s) => s.togglePhysicsDebug);
 
   useEffect(() => {
     const unsubscribe = SerializationManager.subscribeAutosave((state) => {
@@ -149,6 +151,21 @@ export function StatusBar(): React.JSX.Element {
             {workspaceMode}
           </span>
         </div>
+
+        <div className="h-3 w-px bg-neutral-800" />
+
+        <button
+          onClick={togglePhysicsDebug}
+          className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-all cursor-pointer ${
+            showPhysicsDebug
+              ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.2)]'
+              : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/60 border border-transparent'
+          }`}
+          title="Toggle Physics Hitbox & Collider Debugger (Rapier)"
+        >
+          <Boxes size={11} className={showPhysicsDebug ? 'text-emerald-400 animate-pulse' : 'text-neutral-500'} />
+          <span className="text-[9.5px]">Colliders: {showPhysicsDebug ? 'ON' : 'OFF'}</span>
+        </button>
 
         <div className="h-3 w-px bg-neutral-800" />
 
