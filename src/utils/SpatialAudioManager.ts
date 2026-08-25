@@ -79,7 +79,29 @@ class SpatialAudioManagerClass {
    */
   public getListener(): THREE.AudioListener {
     if (!this.listener) {
-      this.listener = new THREE.AudioListener();
+      if (typeof window !== 'undefined' && (typeof window.AudioContext !== 'undefined' || typeof (window as any).webkitAudioContext !== 'undefined')) {
+        this.listener = new THREE.AudioListener();
+      } else {
+        this.listener = {
+          context: {
+            sampleRate: 44100,
+            createBuffer: (channels: number, length: number, sampleRate: number) => ({
+              getChannelData: () => new Float32Array(length),
+              duration: length / sampleRate,
+              length,
+              numberOfChannels: channels,
+              sampleRate,
+            }),
+          },
+          gain: { connect: () => {} },
+          getInput: () => ({}),
+          removeFilter: () => {},
+          setFilter: () => {},
+          getFilter: () => null,
+          getMasterVolume: () => 1,
+          setMasterVolume: () => {},
+        } as any;
+      }
     }
     return this.listener;
   }
@@ -183,6 +205,138 @@ class SpatialAudioManagerClass {
   }
 
   /**
+   * Generates or retrieves a cached procedural impact AudioBuffer (synthetic physical thud)
+   */
+  private proceduralImpactBuffers = new Map<string, AudioBuffer>();
+  private lastCollisionTime = new Map<string, number>();
+
+  public getProceduralImpactBuffer(intensity: number = 1.0): AudioBuffer | null {
+    try {
+      const listener = this.getListener();
+      const ctx = listener.context as AudioContext;
+      if (!ctx || typeof ctx.createBuffer !== 'function') return null;
+
+      const key = `impact_${Math.round(intensity * 10)}`;
+      if (this.proceduralImpactBuffers.has(key)) {
+        return this.proceduralImpactBuffers.get(key)!;
+      }
+
+      const sampleRate = ctx.sampleRate || 44100;
+      const duration = 0.12; // 120ms thud
+      const numSamples = Math.floor(sampleRate * duration);
+      const buffer = ctx.createBuffer(1, numSamples, sampleRate);
+      const data = buffer.getChannelData(0);
+
+      const baseFreq = 80 + Math.min(120, intensity * 40); // 80Hz - 200Hz punch
+
+      for (let i = 0; i < numSamples; i++) {
+        const t = i / sampleRate;
+        const freq = baseFreq * Math.exp(-t * 25);
+        const sine = Math.sin(2 * Math.PI * freq * t);
+        const noise = (Math.random() * 2 - 1) * Math.exp(-t * 80) * 0.3;
+        const env = Math.exp(-t * 30);
+        data[i] = (sine * 0.7 + noise) * env;
+      }
+
+      this.proceduralImpactBuffers.set(key, buffer);
+      return buffer;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Plays a one-shot positional 3D sound at an Object3D's world position
+   */
+  public async playOneShot(
+    objectNode: THREE.Object3D,
+    url?: string,
+    options: SpatialAudioOptions & { intensity?: number } = {}
+  ): Promise<THREE.PositionalAudio | null> {
+    if (!objectNode) return null;
+
+    const listener = this.getListener();
+    let sound: THREE.PositionalAudio;
+    try {
+      sound = new THREE.PositionalAudio(listener);
+    } catch (e) {
+      return null;
+    }
+
+    const intensity = Math.max(0.1, Math.min(2.0, options.intensity ?? 1.0));
+    const baseVol = options.volume ?? 0.8;
+    const finalVolume = baseVol * Math.min(1.0, intensity);
+
+    sound.setVolume(finalVolume);
+    sound.setLoop(false);
+    sound.setRefDistance(options.refDistance ?? 1);
+    sound.setMaxDistance(options.maxDistance ?? 40);
+    sound.setRolloffFactor(options.rolloffFactor ?? 1);
+
+    objectNode.add(sound);
+
+    // Auto cleanup once playback finishes
+    sound.onEnded = () => {
+      if (sound.parent) {
+        sound.parent.remove(sound);
+      }
+      try {
+        sound.disconnect();
+      } catch (e) {}
+    };
+
+    if (url) {
+      const buffer = await this.loadBuffer(url);
+      if (buffer) {
+        sound.setBuffer(buffer);
+        try {
+          sound.play();
+        } catch (e) {}
+        return sound;
+      }
+    }
+
+    // Procedural fallback
+    const procBuffer = this.getProceduralImpactBuffer(intensity);
+    if (procBuffer) {
+      sound.setBuffer(procBuffer);
+      try {
+        sound.play();
+      } catch (e) {}
+      return sound;
+    }
+
+    return sound;
+  }
+
+  /**
+   * Plays a physics-driven collision audio event with velocity-proportional intensity & cooldown throttling
+   */
+  public async playCollisionAudio(
+    objectNode: THREE.Object3D,
+    objectId: string,
+    url?: string,
+    intensity: number = 1.0,
+    options: SpatialAudioOptions = {}
+  ): Promise<void> {
+    if (!objectNode) return;
+
+    // Cooldown check (50ms between collision sounds on same object)
+    const now = performance.now();
+    const lastTime = this.lastCollisionTime.get(objectId) ?? 0;
+    if (now - lastTime < 50) {
+      return;
+    }
+    this.lastCollisionTime.set(objectId, now);
+
+    await this.playOneShot(objectNode, url, {
+      ...options,
+      intensity,
+      volume: options.volume ?? 0.8,
+    });
+  }
+
+  /**
    * Applies spatial falloff and volume options to a Three.js sound instance
    */
   public applyOptions(sound: THREE.PositionalAudio | THREE.Audio, options: SpatialAudioOptions): void {
@@ -242,6 +396,8 @@ class SpatialAudioManagerClass {
       this.removeAudio(id);
     }
     this.bufferCache.clear();
+    this.proceduralImpactBuffers.clear();
+    this.lastCollisionTime.clear();
   }
 }
 

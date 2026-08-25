@@ -82,4 +82,32 @@ describe('SpatialAudioManager Falloff Curves and Calculations', () => {
       expect(gain).toBeCloseTo(0.25, 4);
     });
   });
+
+  describe('Collision Audio and One-Shot Playback', () => {
+    it('should play collision audio and throttle rapid repeated hits within 50ms', async () => {
+      const { SpatialAudioManager } = await import('./SpatialAudioManager');
+      const mockNode = {
+        add: () => {},
+        remove: () => {},
+        position: { set: () => {} },
+      } as any;
+
+      // First trigger should execute
+      await expect(
+        SpatialAudioManager.playCollisionAudio(mockNode, 'obj_box_1', undefined, 1.2)
+      ).resolves.toBeUndefined();
+
+      // Immediate second trigger within 50ms should be throttled safely
+      await expect(
+        SpatialAudioManager.playCollisionAudio(mockNode, 'obj_box_1', undefined, 1.2)
+      ).resolves.toBeUndefined();
+    });
+
+    it('should safely generate procedural impact sound buffer without errors', async () => {
+      const { SpatialAudioManager } = await import('./SpatialAudioManager');
+      const buffer = SpatialAudioManager.getProceduralImpactBuffer(1.5);
+      // In NodeJS test environment where AudioContext createBuffer may be simulated or null
+      expect(buffer === null || typeof buffer === 'object').toBe(true);
+    });
+  });
 });

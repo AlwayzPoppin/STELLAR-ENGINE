@@ -1363,7 +1363,26 @@ const SceneNode = React.memo(function SceneNode({
   return (
     <>
       {isSimulating ? (
-        <RigidBody key={`${obj.id}-${obj.url || ''}-${obj.geometry || ''}`} {...wrapperProps} ref={handleRef}>
+        <RigidBody
+          key={`${obj.id}-${obj.url || ''}-${obj.geometry || ''}`}
+          {...wrapperProps}
+          ref={handleRef}
+          onCollisionEnter={(payload) => {
+            if (ref.current && isSimulating) {
+              const force = (payload as any)?.totalForceMagnitude ?? (payload as any)?.totalForce ?? 15;
+              if (force > 5) {
+                const intensity = Math.min(2.0, Math.max(0.2, force / 25));
+                const audioUrl = obj.audioProps?.url || (obj as any).collisionAudioUrl;
+                SpatialAudioManager.playCollisionAudio(ref.current, obj.id, audioUrl, intensity, {
+                  refDistance: obj.audioProps?.refDistance ?? 1,
+                  maxDistance: obj.audioProps?.maxDistance ?? 40,
+                  rolloffFactor: obj.audioProps?.rolloffFactor ?? 1,
+                  volume: obj.audioProps?.volume ?? 0.8,
+                });
+              }
+            }
+          }}
+        >
           {/* groupContent inherits the RigidBody transform — no extra wrapper needed */}
           {groupContent}
 
