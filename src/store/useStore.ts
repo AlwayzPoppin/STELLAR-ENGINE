@@ -2375,16 +2375,41 @@ export const useStore = create<EngineState>()(
         if (msg.actions) {
           for (const patch of msg.actions) {
             if (patch.cmd === 'add_object' && patch.params) {
-              const { type, customName, color } = patch.params;
-              get().addPrimitive(type || 'cube');
-              const objs = get().objects;
-              const newObj = objs[objs.length - 1];
-              if (newObj) {
-                const updates: Partial<SceneObject> = {};
-                if (customName) updates.name = customName;
-                if (color) updates.material = { ...newObj.material, color };
-                if (Object.keys(updates).length > 0) {
-                  get().updateObject(newObj.id, updates);
+              const { type, customName, color, voxelHotbarProps } = patch.params;
+              if (type === 'voxel_hotbar') {
+                const hotbarId = `hotbar_${crypto.randomUUID().substring(0, 8)}`;
+                get().addObject({
+                  id: hotbarId,
+                  name: customName || 'Voxel Block Hotbar (HUD)',
+                  type: 'voxel_hotbar',
+                  position: [0, 0, 0],
+                  rotation: [0, 0, 0],
+                  scale: [1, 1, 1],
+                  voxelHotbarProps: voxelHotbarProps || {
+                    slotCount: 9,
+                    activeSlotIndex: 0,
+                    showKeybinds: true,
+                    styleVariant: 'minecraft',
+                    autoHideInEditMode: false,
+                    enableVoxelMining: true,
+                    enableVoxelPlacing: true,
+                    miningRange: 8.0,
+                    placeCooldownMs: 150,
+                    items: [],
+                  },
+                });
+              } else {
+                get().addPrimitive(type || 'cube');
+                const objs = get().objects;
+                const newObj = objs[objs.length - 1];
+                if (newObj) {
+                  const updates: Partial<SceneObject> = {};
+                  if (customName) updates.name = customName;
+                  if (color) updates.material = { ...newObj.material, color };
+                  if (voxelHotbarProps) updates.voxelHotbarProps = voxelHotbarProps;
+                  if (Object.keys(updates).length > 0) {
+                    get().updateObject(newObj.id, updates);
+                  }
                 }
               }
             } else if (patch.cmd === 'delete_object') {
@@ -2627,6 +2652,7 @@ export const useStore = create<EngineState>()(
             } : null,
             currentEnv,
             gameBible: gameBible || '',
+            objects: objects,
           });
 
           set((state) => ({
