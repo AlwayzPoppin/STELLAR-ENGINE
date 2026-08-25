@@ -87,3 +87,71 @@ describe('ScriptEditorView debounce and state management', () => {
     expect(updateAsset).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Monaco Script Autocompletions (Engine, Quests, Dialogues, Variables)', () => {
+  const mockMonaco = {
+    languages: {
+      CompletionItemKind: {
+        Method: 0,
+        Property: 1,
+        Variable: 2,
+        Snippet: 3,
+        Class: 4,
+        Module: 5,
+      },
+      CompletionItemInsertTextRule: {
+        InsertAsSnippet: 4,
+      },
+    },
+  };
+
+  const dummyRange = {
+    startLineNumber: 1,
+    endLineNumber: 1,
+    startColumn: 1,
+    endColumn: 1,
+  };
+
+  it('should provide Engine method suggestions when typing Engine.', async () => {
+    const { buildScriptCompletions } = await import('./ScriptEditorView');
+    const suggestions = buildScriptCompletions(mockMonaco, 'lua', 'Engine.', dummyRange);
+
+    const labels = suggestions.map((s: any) => s.label);
+    expect(labels).toContain('SetVariable');
+    expect(labels).toContain('GetVariable');
+    expect(labels).toContain('DeleteVariable');
+    expect(labels).toContain('StartQuest');
+    expect(labels).toContain('CompleteObjective');
+    expect(labels).toContain('UpdateObjective');
+    expect(labels).toContain('CompleteQuest');
+    expect(labels).toContain('ShowDialogue');
+    expect(labels).toContain('CloseDialogue');
+    expect(labels).toContain('TriggerEvent');
+    expect(labels).toContain('SpawnParticles');
+  });
+
+  it('should provide self properties when typing self.', async () => {
+    const { buildScriptCompletions } = await import('./ScriptEditorView');
+    const suggestions = buildScriptCompletions(mockMonaco, 'lua', 'self.', dummyRange);
+
+    const labels = suggestions.map((s: any) => s.label);
+    expect(labels).toContain('id');
+    expect(labels).toContain('name');
+    expect(labels).toContain('position');
+    expect(labels).toContain('rotation');
+    expect(labels).toContain('scale');
+  });
+
+  it('should provide top-level symbols including Engine and update snippets', async () => {
+    const { buildScriptCompletions } = await import('./ScriptEditorView');
+    const suggestions = buildScriptCompletions(mockMonaco, 'lua', '', dummyRange);
+
+    const labels = suggestions.map((s: any) => s.label);
+    expect(labels).toContain('Engine');
+    expect(labels).toContain('self');
+    expect(labels).toContain('delta');
+    expect(labels).toContain('function update');
+    expect(labels).toContain('function init');
+  });
+});
+

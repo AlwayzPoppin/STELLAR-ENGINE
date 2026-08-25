@@ -10,6 +10,255 @@ interface Props {
   assetId: string;
 }
 
+export function buildScriptCompletions(
+  monaco: any,
+  lang: string,
+  textBeforeCursor: string,
+  range: any
+) {
+  const normalized = textBeforeCursor.trim();
+
+  // Engine.* autocompletions
+  if (normalized.endsWith('Engine.') || normalized.endsWith('engine.')) {
+    return [
+      {
+        label: 'SetVariable',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(key: string, value: any) => void',
+        documentation: 'Set a global game variable in Zustand state.\n\nExample:\nEngine.SetVariable("coins", 100)',
+        insertText: 'SetVariable("${1:key}", ${2:value})',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'GetVariable',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(key: string) => any',
+        documentation: 'Get the current value of a global game variable.\n\nExample:\nlocal coins = Engine.GetVariable("coins")',
+        insertText: 'GetVariable("${1:key}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'DeleteVariable',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(key: string) => void',
+        documentation: 'Remove a global game variable from the session.\n\nExample:\nEngine.DeleteVariable("tempFlag")',
+        insertText: 'DeleteVariable("${1:key}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'GetVariables',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '() => Record<string, any>',
+        documentation: 'Get a snapshot of all active global game variables.',
+        insertText: 'GetVariables()',
+        range,
+      },
+      {
+        label: 'StartQuest',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(questId: string) => void',
+        documentation: 'Set a quest status to active.\n\nExample:\nEngine.StartQuest("quest_slay_goblins")',
+        insertText: 'StartQuest("${1:questId}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'CompleteObjective',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(questId: string, objId: string) => void',
+        documentation: 'Complete an objective within a quest. Auto-completes the quest if all objectives are fulfilled.\n\nExample:\nEngine.CompleteObjective("quest_slay_goblins", "obj_defeat_5")',
+        insertText: 'CompleteObjective("${1:questId}", "${2:objId}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'UpdateObjective',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(questId: string, objId: string, count: number) => void',
+        documentation: 'Update the progress count on a quest objective.\n\nExample:\nEngine.UpdateObjective("quest_slay_goblins", "obj_defeat_5", 3)',
+        insertText: 'UpdateObjective("${1:questId}", "${2:objId}", ${3:count})',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'CompleteQuest',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(questId: string) => void',
+        documentation: 'Complete a quest and trigger on_quest_complete scripted events.\n\nExample:\nEngine.CompleteQuest("quest_slay_goblins")',
+        insertText: 'CompleteQuest("${1:questId}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'GetQuests',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '() => Quest[]',
+        documentation: 'Get all configured quests in the project.',
+        insertText: 'GetQuests()',
+        range,
+      },
+      {
+        label: 'GetQuest',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(questId: string) => Quest | undefined',
+        documentation: 'Retrieve a quest by ID or title.\n\nExample:\nlocal q = Engine.GetQuest("quest_slay_goblins")',
+        insertText: 'GetQuest("${1:questId}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'ShowDialogue',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(text: string, speakerName?: string, speakerId?: string) => void',
+        documentation: 'Display an in-game NPC dialogue banner.\n\nExample:\nEngine.ShowDialogue("Welcome to the realm!", "Elder Mage")',
+        insertText: 'ShowDialogue("${1:text}", "${2:speakerName}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'CloseDialogue',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '() => void',
+        documentation: 'Dismiss the currently active dialogue.',
+        insertText: 'CloseDialogue()',
+        range,
+      },
+      {
+        label: 'TriggerEvent',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(triggerType: string, targetId?: string) => void',
+        documentation: 'Trigger a scripted event (on_enter_trigger, on_click, on_enemy_defeated).\n\nExample:\nEngine.TriggerEvent("on_enemy_defeated", "goblin_boss")',
+        insertText: 'TriggerEvent("${1:triggerType}", "${2:targetId}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'SpawnParticles',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(effectType: string, x: number, y: number, z: number) => void',
+        documentation: 'Spawn 3D particle emitter at coordinates.\n\nExample:\nEngine.SpawnParticles("spark", 0, 5, 0)',
+        insertText: 'SpawnParticles("${1:spark}", ${2:0}, ${3:5}, ${4:0})',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'GetTime',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '() => number',
+        documentation: 'Get high-precision elapsed runtime in seconds.',
+        insertText: 'GetTime()',
+        range,
+      },
+    ];
+  }
+
+  // self.* autocompletions
+  if (normalized.endsWith('self.')) {
+    return [
+      { label: 'id', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Object ID string.', insertText: 'id', range },
+      { label: 'name', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Object name.', insertText: 'name', range },
+      { label: 'position', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Vector3 position.', insertText: 'position', range },
+      { label: 'rotation', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Vector3 rotation.', insertText: 'rotation', range },
+      { label: 'scale', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Vector3 scale.', insertText: 'scale', range },
+      { label: 'health', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Object health.', insertText: 'health', range },
+    ];
+  }
+
+  // Instance.* autocompletions
+  if (normalized.endsWith('Instance.')) {
+    return [
+      {
+        label: 'new',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(className: string) => Instance',
+        documentation: 'Instantiate a new Part, Model, Motor6D, or Light.',
+        insertText: 'new("${1:Part}")',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+    ];
+  }
+
+  // Vector3.* autocompletions
+  if (normalized.endsWith('Vector3.')) {
+    return [
+      {
+        label: 'new',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(x: number, y: number, z: number) => Vector3',
+        documentation: 'Create a 3D vector.',
+        insertText: 'new(${1:0}, ${2:0}, ${3:0})',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      { label: 'zero', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Vector3(0, 0, 0)', insertText: 'zero', range },
+      { label: 'one', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Vector3(1, 1, 1)', insertText: 'one', range },
+    ];
+  }
+
+  // CFrame.* autocompletions
+  if (normalized.endsWith('CFrame.')) {
+    return [
+      {
+        label: 'new',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(x: number, y: number, z: number) => CFrame',
+        documentation: 'Create a Coordinate Frame.',
+        insertText: 'new(${1:0}, ${2:0}, ${3:0})',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+      {
+        label: 'Angles',
+        kind: monaco.languages.CompletionItemKind.Method,
+        detail: '(rx: number, ry: number, rz: number) => CFrame',
+        documentation: 'Create rotation angles in radians.',
+        insertText: 'Angles(${1:0}, ${2:0}, ${3:0})',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        range,
+      },
+    ];
+  }
+
+  // Top-level global symbols and keywords
+  return [
+    {
+      label: 'Engine',
+      kind: monaco.languages.CompletionItemKind.Class,
+      detail: 'Stellar Engine Game Systems API',
+      documentation: 'Core engine API for game variables, quests, objectives, dialogues, and particle effects.',
+      insertText: 'Engine',
+      range,
+    },
+    { label: 'self', kind: monaco.languages.CompletionItemKind.Variable, documentation: 'Reference to current scene object.', insertText: 'self', range },
+    { label: 'delta', kind: monaco.languages.CompletionItemKind.Variable, documentation: 'Delta time since last frame in seconds.', insertText: 'delta', range },
+    { label: 'Vector3', kind: monaco.languages.CompletionItemKind.Class, documentation: '3D Vector constructor.', insertText: 'Vector3', range },
+    { label: 'CFrame', kind: monaco.languages.CompletionItemKind.Class, documentation: 'Coordinate Frame transform.', insertText: 'CFrame', range },
+    { label: 'Instance', kind: monaco.languages.CompletionItemKind.Class, documentation: 'Roblox / Stellar Instance constructor.', insertText: 'Instance', range },
+    { label: 'Workspace', kind: monaco.languages.CompletionItemKind.Variable, documentation: 'Global scene root workspace.', insertText: 'Workspace', range },
+    { label: 'task', kind: monaco.languages.CompletionItemKind.Module, documentation: 'Task scheduler library (task.wait).', insertText: 'task', range },
+    {
+      label: 'function update',
+      kind: monaco.languages.CompletionItemKind.Snippet,
+      documentation: 'Frame update lifecycle function.',
+      insertText: lang === 'lua' ? 'function update(self, delta)\n\t$0\nend' : 'function update(self, delta) {\n\t$0\n}',
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      range,
+    },
+    {
+      label: 'function init',
+      kind: monaco.languages.CompletionItemKind.Snippet,
+      documentation: 'Initialization lifecycle function.',
+      insertText: lang === 'lua' ? 'function init(self)\n\t$0\nend' : 'function init(self) {\n\t$0\n}',
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      range,
+    },
+  ];
+}
+
 export default function ScriptEditorView({ assetId }: Props) {
   const updateAsset = useAssetStore((s) => s.updateAsset);
   const asset = useAssetStore((s) => s.assets.find((a) => a.id === assetId));
@@ -166,12 +415,17 @@ export default function ScriptEditorView({ assetId }: Props) {
     });
 
     if (providerRef.current) {
-      providerRef.current.dispose();
+      if (Array.isArray(providerRef.current)) {
+        providerRef.current.forEach((p) => p?.dispose?.());
+      } else {
+        providerRef.current?.dispose?.();
+      }
     }
 
-    // Register Lua & JS completions
-    const registerCompletions = (lang: string) => {
-      return monaco.languages.registerCompletionItemProvider(lang, {
+    // Register Lua, JavaScript, and TypeScript completions
+    const disposables: any[] = [];
+    ['lua', 'javascript', 'typescript'].forEach((lang) => {
+      const d = monaco.languages.registerCompletionItemProvider(lang, {
         triggerCharacters: ['.'],
         provideCompletionItems: (model, position) => {
           const word = model.getWordUntilPosition(position);
@@ -184,47 +438,15 @@ export default function ScriptEditorView({ assetId }: Props) {
 
           const lineText = model.getLineContent(position.lineNumber);
           const textBeforeCursor = lineText.substring(0, position.column - 1);
+          const suggestions = buildScriptCompletions(monaco, lang, textBeforeCursor, range);
 
-          if (textBeforeCursor.endsWith('self.')) {
-            return {
-              suggestions: [
-                { label: 'id', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Object ID.', insertText: 'id', range },
-                { label: 'name', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Object name.', insertText: 'name', range },
-                { label: 'position', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Vector3 position.', insertText: 'position', range },
-                { label: 'rotation', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Vector3 rotation.', insertText: 'rotation', range },
-                { label: 'scale', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Vector3 scale.', insertText: 'scale', range },
-                { label: 'health', kind: monaco.languages.CompletionItemKind.Property, documentation: 'Object health.', insertText: 'health', range },
-              ],
-            };
-          }
-
-          return {
-            suggestions: [
-              { label: 'self', kind: monaco.languages.CompletionItemKind.Variable, documentation: 'Self reference.', insertText: 'self', range },
-              { label: 'delta', kind: monaco.languages.CompletionItemKind.Variable, documentation: 'Delta time.', insertText: 'delta', range },
-              {
-                label: 'function update',
-                kind: monaco.languages.CompletionItemKind.Snippet,
-                documentation: 'Lua/JS update lifecycle function.',
-                insertText: lang === 'lua' ? 'function update(self, delta)\n\t$0\nend' : 'function update(self, delta) {\n\t$0\n}',
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                range,
-              },
-              {
-                label: 'function init',
-                kind: monaco.languages.CompletionItemKind.Snippet,
-                documentation: 'Init lifecycle function.',
-                insertText: lang === 'lua' ? 'function init(self)\n\t$0\nend' : 'function init(self) {\n\t$0\n}',
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                range,
-              },
-            ],
-          };
+          return { suggestions };
         },
       });
-    };
+      disposables.push(d);
+    });
 
-    providerRef.current = registerCompletions('lua');
+    providerRef.current = disposables;
   };
 
   return (
