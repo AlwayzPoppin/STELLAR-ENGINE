@@ -1001,6 +1001,7 @@ function renderGeometry(geometryType?: string, isWater?: boolean) {
 }
 
 const compiledScripts: Record<string, Function> = {};
+export const failedScripts = new Set<string>();
 
 // Module-scoped scratch objects for zero-allocation per-frame physics & behavior updates
 const _tempTranslation = { x: 0, y: 0, z: 0 };
@@ -1054,7 +1055,9 @@ const SceneNode = React.memo(function SceneNode({
       if (script && script.content) {
         try {
           compiledScripts[scriptId] = new Function('self', 'delta', script.content);
+          failedScripts.delete(scriptId); // Reset blacklisting when script is updated/recompiled
         } catch (e: any) {
+          failedScripts.add(scriptId);
           console.error(`[Script Compile Error] ${scriptId}:`, e.message);
         }
       }
@@ -1185,12 +1188,14 @@ const SceneNode = React.memo(function SceneNode({
 
     if (obj.scripts && obj.scripts.length > 0) {
       obj.scripts.forEach((scriptId) => {
+        if (failedScripts.has(scriptId)) return;
         const fn = compiledScripts[scriptId];
         if (fn) {
           try {
             fn(ref.current, delta);
           } catch (e: any) {
-            console.error(`[Script Runtime Error] ${scriptId}:`, e.message);
+            failedScripts.add(scriptId);
+            console.error(`[Script Runtime Error] Script "${scriptId}" failed and was paused:`, e.message);
           }
         }
       });
