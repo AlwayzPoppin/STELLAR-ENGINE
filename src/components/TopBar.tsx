@@ -537,13 +537,6 @@ function TopBar() {
                       <span>Motor6D Rig Joint</span>
                     </button>
                     <button
-                      onClick={() => { addPrimitive('voxel_hotbar'); setIsInsertMenuOpen(false); }}
-                      className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-neutral-300 hover:bg-neutral-900 hover:text-white transition-colors group text-left"
-                    >
-                      <Layers size={14} className="text-neutral-400 group-hover:text-cyan-400 transition-colors" />
-                      <span>Voxel Block Hotbar (HUD)</span>
-                    </button>
-                    <button
                       onClick={() => { addScript(); setIsInsertMenuOpen(false); }}
                       className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-xs text-neutral-300 hover:bg-neutral-900 hover:text-white transition-colors group text-left"
                     >

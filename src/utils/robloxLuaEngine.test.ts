@@ -13,22 +13,22 @@ model.Name = "AdvancedShapeGallery"
 model.Parent = Workspace
 
 local pyramid = Instance.new("PyramidPart")
-pyramid.Name = "VoxelPyramid"
+pyramid.Name = "TestPyramid"
 pyramid.Position = Vector3.new(0, 5, 0)
 pyramid.Parent = model
 
 local cone = Instance.new("ConePart")
-cone.Name = "VoxelCone"
+cone.Name = "TestCone"
 cone.Position = Vector3.new(5, 5, 0)
 cone.Parent = model
 
 local torus = Instance.new("TorusPart")
-torus.Name = "VoxelTorus"
+torus.Name = "TestTorus"
 torus.Position = Vector3.new(10, 5, 0)
 torus.Parent = model
 
 local rounded = Instance.new("RoundedBlockPart")
-rounded.Name = "VoxelRoundedCube"
+rounded.Name = "TestRoundedCube"
 rounded.BevelRadius = 0.2
 rounded.Position = Vector3.new(15, 5, 0)
 rounded.Parent = model
@@ -39,16 +39,16 @@ rounded.Parent = model
     expect(result.partsCreated).toBe(4);
 
     const objects = useStore.getState().objects;
-    const pyramidObj = objects.find((o) => o.name === 'VoxelPyramid');
+    const pyramidObj = objects.find((o) => o.name === 'TestPyramid');
     expect(pyramidObj?.geometry).toBe('pyramid');
 
-    const coneObj = objects.find((o) => o.name === 'VoxelCone');
+    const coneObj = objects.find((o) => o.name === 'TestCone');
     expect(coneObj?.geometry).toBe('cone');
 
-    const torusObj = objects.find((o) => o.name === 'VoxelTorus');
+    const torusObj = objects.find((o) => o.name === 'TestTorus');
     expect(torusObj?.geometry).toBe('torus');
 
-    const roundedObj = objects.find((o) => o.name === 'VoxelRoundedCube');
+    const roundedObj = objects.find((o) => o.name === 'TestRoundedCube');
     expect(roundedObj?.geometry).toBe('roundedCube');
     expect(roundedObj?.bevelRadius).toBe(0.2);
   });

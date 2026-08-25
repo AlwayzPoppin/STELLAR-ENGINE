@@ -37,20 +37,15 @@ describe('offlineRouter generic intent routing', () => {
     expect(res.actions?.[0].params.color).toBe('#ff0000');
   });
 
-  it('should route voxel hotbar configuration requests and generate themed item palettes', () => {
-    const res1 = routeIntent('configure my voxel hotbar for desert oasis', dummyCtx);
+  it('should route scripted event creation and variable assignment', () => {
+    const res1 = routeIntent('create level start event', dummyCtx);
     expect(res1.actionType).toBe('scene_action');
-    expect(res1.actionLabel).toContain('Desert Oasis');
-    expect(res1.actions?.[0].params.voxelHotbarProps.items.length).toBeGreaterThanOrEqual(4);
+    expect(res1.actionLabel).toContain('Scripted Event');
+    expect(res1.actions?.[0].cmd).toBe('add_scripted_event');
 
-    const res2 = routeIntent('setup cyberpunk neon hotbar inventory', dummyCtx);
+    const res2 = routeIntent('set game score to 100', dummyCtx);
     expect(res2.actionType).toBe('scene_action');
-    expect(res2.actionLabel).toContain('Cyberpunk Neon');
-    expect(res2.actions?.[0].params.voxelHotbarProps.items.some((i: any) => i.name.includes('Neon'))).toBe(true);
-
-    const res3 = routeIntent('setup medieval castle hotbar palette', dummyCtx);
-    expect(res3.actionType).toBe('scene_action');
-    expect(res3.actionLabel).toContain('Medieval Castle');
-    expect(res3.actions?.[0].params.voxelHotbarProps.items.some((i: any) => i.name.includes('Stone') || i.name.includes('Cobblestone'))).toBe(true);
+    expect(res2.actions?.[0].cmd).toBe('set_game_variable');
+    expect(res2.actions?.[0].params.key).toBe('score');
   });
 });

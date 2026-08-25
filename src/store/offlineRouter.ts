@@ -31,7 +31,7 @@ interface RouterContext {
   selectedObj: { id: string; name: string; material?: any; physics?: string; physicsMass?: number } | null;
   currentEnv: Record<string, any>;
   gameBible: string;
-  objects?: Array<{ id: string; name: string; type?: string; voxelHotbarProps?: any; [key: string]: any }>;
+  objects?: Array<{ id: string; name: string; type?: string; [key: string]: any }>;
 }
 
 // ─── Generic Genre Blueprint Database ─────────────────────────────
@@ -311,6 +311,23 @@ function parseIntent(input: string): ParsedIntent {
       return { intent: 'GENRE_BLUEPRINT', genre: entry.blueprint.genre, keywords: words };
     }
   }
+  // 3.5 Agentic commands (add, delete, quest, event, variable, sound, visibility, set)
+  const isAgentic = (
+    clean.includes('add') || clean.includes('spawn') || clean.includes('create') || clean.includes('insert') ||
+    clean.includes('delete') || clean.includes('remove') || clean.includes('destroy') || clean.includes('set') ||
+    clean.includes('quest') || clean.includes('mission') || clean.includes('event') || clean.includes('variable') ||
+    clean.includes('sound') || clean.includes('audio') || clean.includes('visibility') || clean.includes('visible')
+  ) && (
+    clean.includes('cube') || clean.includes('sphere') || clean.includes('light') || clean.includes('plane') ||
+    clean.includes('cylinder') || clean.includes('object') || clean.includes('quest') || clean.includes('event') ||
+    clean.includes('variable') || clean.includes('timer') || clean.includes('cooldown') || clean.includes('score') ||
+    clean.includes('health') || clean.includes('points') || clean.includes('visibility') || clean.includes('visible') ||
+    clean.includes('sound') || clean.includes('audio')
+  );
+  if (isAgentic) {
+    return { intent: 'AGENTIC_CMD', keywords: words };
+  }
+
   // Also catch generic "game" mentions — check if previous intent was GREETING (follow-up)
   if (clean.includes('game') || clean.includes('make') || clean.includes('build') || clean.includes('create')) {
     // Try to infer a genre from the text
@@ -323,25 +340,6 @@ function parseIntent(input: string): ParsedIntent {
     if (clean.includes('game')) {
       return { intent: 'GENRE_BLUEPRINT', keywords: words };
     }
-  }
-
-  // 3.5 Agentic commands (add, delete, quest, event, variable, sound, visibility, hotbar)
-  const isAgentic = (
-    clean.includes('add') || clean.includes('spawn') || clean.includes('create') || clean.includes('insert') ||
-    clean.includes('delete') || clean.includes('remove') || clean.includes('destroy') ||
-    clean.includes('quest') || clean.includes('mission') || clean.includes('event') || clean.includes('variable') ||
-    clean.includes('sound') || clean.includes('audio') || clean.includes('visibility') || clean.includes('visible') ||
-    clean.includes('hotbar') || clean.includes('inventory') || clean.includes('palette') || clean.includes('voxel')
-  ) && (
-    clean.includes('cube') || clean.includes('sphere') || clean.includes('light') || clean.includes('plane') ||
-    clean.includes('cylinder') || clean.includes('object') || clean.includes('quest') || clean.includes('event') ||
-    clean.includes('variable') || clean.includes('timer') || clean.includes('cooldown') || clean.includes('score') ||
-    clean.includes('health') || clean.includes('points') || clean.includes('visibility') || clean.includes('visible') ||
-    clean.includes('sound') || clean.includes('audio') || clean.includes('hotbar') || clean.includes('inventory') ||
-    clean.includes('palette') || clean.includes('voxel')
-  );
-  if (isAgentic) {
-    return { intent: 'AGENTIC_CMD', keywords: words };
   }
 
   // 4. Environment modifications (global scope keywords)
@@ -639,99 +637,6 @@ export function routeIntent(query: string, ctx: RouterContext): AssistantMessage
           after: {},
           cmd: 'set_game_variable',
           params: { key, value: val }
-        });
-      } else if (
-        clean.includes('hotbar') ||
-        clean.includes('inventory') ||
-        clean.includes('palette') ||
-        (clean.includes('voxel') && (clean.includes('setup') || clean.includes('configure') || clean.includes('item') || clean.includes('tool') || clean.includes('build')))
-      ) {
-        let themeLabel = 'Balanced Building Palette';
-        let customItems = [
-          { id: 'item_1', name: 'Grass Block', geometry: 'box', color: '#44aa44', material: 'Grass' },
-          { id: 'item_2', name: 'Dirt Block', geometry: 'box', color: '#885522', material: 'Dirt' },
-          { id: 'item_3', name: 'Stone Block', geometry: 'box', color: '#777777', material: 'Slate' },
-          { id: 'item_4', name: 'Oak Wood', geometry: 'box', color: '#664422', material: 'Wood' },
-          { id: 'item_5', name: 'Leaves Block', geometry: 'box', color: '#227722', material: 'Grass' },
-          { id: 'item_6', name: 'Red Brick', geometry: 'box', color: '#aa3322', material: 'Plastic' },
-          { id: 'item_7', name: 'Sand Block', geometry: 'box', color: '#ddcc77', material: 'Sand' },
-          { id: 'item_8', name: 'Glass Block', geometry: 'box', color: '#88ddee', material: 'Glass' },
-          { id: 'item_9', name: 'Voxel Pyramid', geometry: 'pyramid', color: '#cc44bb', material: 'SmoothPlastic' },
-        ];
-
-        if (clean.includes('desert') || clean.includes('sand') || clean.includes('egypt')) {
-          themeLabel = 'Desert Oasis Palette';
-          customItems = [
-            { id: 'item_1', name: 'Yellow Sand', geometry: 'box', color: '#e0c068', material: 'Sand' },
-            { id: 'item_2', name: 'Sandstone Brick', geometry: 'box', color: '#c49a45', material: 'Slate' },
-            { id: 'item_3', name: 'Red Terracotta', geometry: 'box', color: '#a04830', material: 'Plastic' },
-            { id: 'item_4', name: 'Desert Pyramid', geometry: 'pyramid', color: '#d4a840', material: 'Slate' },
-            { id: 'item_5', name: 'Palm Wood', geometry: 'cylinder', color: '#885522', material: 'Wood' },
-            { id: 'item_6', name: 'Cactus Block', geometry: 'cylinder', color: '#338833', material: 'Grass' },
-            { id: 'item_7', name: 'Gold Block', geometry: 'box', color: '#ffcc00', material: 'Metal' },
-            { id: 'item_8', name: 'Clear Glass', geometry: 'box', color: '#aaddff', material: 'Glass' },
-          ];
-        } else if (clean.includes('scifi') || clean.includes('cyber') || clean.includes('neon') || clean.includes('future')) {
-          themeLabel = 'Cyberpunk Neon Palette';
-          customItems = [
-            { id: 'item_1', name: 'Neon Cyan Core', geometry: 'box', color: '#00ffff', material: 'Neon' },
-            { id: 'item_2', name: 'Plasma Magenta', geometry: 'box', color: '#ff00aa', material: 'Neon' },
-            { id: 'item_3', name: 'Dark Alloy Block', geometry: 'box', color: '#1a1a24', material: 'Metal' },
-            { id: 'item_4', name: 'Titanium Pillar', geometry: 'cylinder', color: '#556677', material: 'Metal' },
-            { id: 'item_5', name: 'Holo Emitter', geometry: 'cone', color: '#00ffaa', material: 'Neon' },
-            { id: 'item_6', name: 'Laser Barrier', geometry: 'plane', color: '#ff3300', material: 'Neon' },
-            { id: 'item_7', name: 'Cyber Glass', geometry: 'box', color: '#224488', material: 'Glass' },
-          ];
-        } else if (clean.includes('castle') || clean.includes('dungeon') || clean.includes('stone') || clean.includes('medieval')) {
-          themeLabel = 'Medieval Castle Palette';
-          customItems = [
-            { id: 'item_1', name: 'Cobblestone', geometry: 'box', color: '#555555', material: 'Granite' },
-            { id: 'item_2', name: 'Stone Brick', geometry: 'box', color: '#777777', material: 'Slate' },
-            { id: 'item_3', name: 'Dark Oak Plank', geometry: 'box', color: '#442811', material: 'Wood' },
-            { id: 'item_4', name: 'Castle Pillar', geometry: 'cylinder', color: '#666666', material: 'Granite' },
-            { id: 'item_5', name: 'Roof Shingle', geometry: 'wedge', color: '#883322', material: 'Slate' },
-            { id: 'item_6', name: 'Iron Grate', geometry: 'box', color: '#333344', material: 'Metal' },
-            { id: 'item_7', name: 'Glowing Torch', geometry: 'cylinder', color: '#ff8800', material: 'Neon' },
-          ];
-        } else if (clean.includes('nature') || clean.includes('forest') || clean.includes('garden')) {
-          themeLabel = 'Lush Forest Palette';
-          customItems = [
-            { id: 'item_1', name: 'Lush Grass', geometry: 'box', color: '#2e8b57', material: 'Grass' },
-            { id: 'item_2', name: 'Rich Soil', geometry: 'box', color: '#5c4033', material: 'Dirt' },
-            { id: 'item_3', name: 'Oak Wood', geometry: 'cylinder', color: '#8b5a2b', material: 'Wood' },
-            { id: 'item_4', name: 'Dense Leaves', geometry: 'box', color: '#228b22', material: 'Grass' },
-            { id: 'item_5', name: 'River Stone', geometry: 'roundedCube', color: '#708090', material: 'Slate' },
-            { id: 'item_6', name: 'Crystal Water', geometry: 'box', color: '#1e90ff', material: 'Glass' },
-            { id: 'item_7', name: 'Blossom Petal', geometry: 'teardrop', color: '#ff69b4', material: 'SmoothPlastic' },
-          ];
-        }
-
-        const newProps = {
-          slotCount: Math.min(9, Math.max(4, customItems.length)),
-          activeSlotIndex: 0,
-          showKeybinds: true,
-          styleVariant: 'minecraft',
-          autoHideInEditMode: false,
-          enableVoxelMining: true,
-          enableVoxelPlacing: true,
-          miningRange: 8.0,
-          placeCooldownMs: 150,
-          items: customItems,
-        };
-
-        textContent = `I will configure your Voxel Hotbar HUD with **${themeLabel}** (${customItems.length} tool slots).`;
-        label = `Configure Hotbar: ${themeLabel}`;
-        actions.push({
-          targetId: 'voxel_hotbar',
-          targetName: 'Voxel Block Hotbar (HUD)',
-          before: {},
-          after: {},
-          cmd: 'add_object',
-          params: {
-            type: 'voxel_hotbar',
-            customName: `Voxel Hotbar (${themeLabel})`,
-            voxelHotbarProps: newProps,
-          },
         });
       } else {
         textContent = `I will create a scripted event block for your level progression.`;

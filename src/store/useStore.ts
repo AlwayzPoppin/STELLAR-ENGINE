@@ -124,28 +124,6 @@ export interface AnimationConfig {
   loop?: boolean;
 }
 
-export interface VoxelHotbarItem {
-  id: string;
-  name: string;
-  geometry: 'box' | 'sphere' | 'cylinder' | 'cone' | 'wedge' | 'pyramid' | 'roundedCube' | 'torus';
-  color: string;
-  material?: string;
-  icon?: string;
-}
-
-export interface VoxelHotbarProps {
-  slotCount: number;
-  activeSlotIndex: number;
-  items: VoxelHotbarItem[];
-  showKeybinds: boolean;
-  styleVariant?: 'modern' | 'minecraft' | 'roblox';
-  autoHideInEditMode?: boolean;
-  enableVoxelMining?: boolean;
-  enableVoxelPlacing?: boolean;
-  miningRange?: number;
-  placeCooldownMs?: number;
-}
-
 export type SceneObject = {
   id: string;
   name: string;
@@ -162,8 +140,6 @@ export type SceneObject = {
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
-  // Voxel Block Hotbar System
-  voxelHotbarProps?: VoxelHotbarProps;
   // Motor 6D Rigging Joint properties
   motor6dProps?: {
     part0Id?: string;
@@ -186,7 +162,6 @@ export type SceneObject = {
   glowIntensity?: number;
   glowExponent?: number;
   meshRotationY?: number;
-  voxelCelestialType?: 'sphere' | 'cube' | 'diamond' | 'pixel_ring';
   bevelRadius?: number;
   bevelSegments?: number;
   scriptCode?: string;
@@ -558,10 +533,6 @@ export interface GameplaySettings {
   showCrosshair: boolean;
   crosshairStyle: 'classic' | 'dot' | 'circle' | 'dynamic';
   crosshairColor: string;
-  enableVoxelMining: boolean;
-  enableVoxelPlacing: boolean;
-  miningRange: number;
-  placeCooldownMs: number;
   cameraMode: 'third_person' | 'first_person' | 'shift_lock';
   fov: number;
   pvpDamage: boolean;
@@ -598,7 +569,7 @@ export type EnvironmentSettings = {
   cloudsSpeed: number;
   cloudsAltitude?: number;
   cloudsSize?: number;
-  cloudsType: 'volumetric' | 'flat' | 'cirrus' | 'voxel' | 'nimbus' | 'blizzard';
+  cloudsType: 'volumetric' | 'flat' | 'cirrus' | 'nimbus' | 'blizzard';
   rainEnabled: boolean;
   rainIntensity: number;
   rainSpeed: number;
@@ -800,7 +771,6 @@ export interface StoreState {
       | 'floor'
       | 'ceiling'
       | 'motor6d'
-      | 'voxel_hotbar'
       | 'pyramid'
       | 'roundedCube'
       | 'teardrop'
@@ -865,8 +835,6 @@ export interface StoreState {
   startFreshSession: () => void;
   gameplaySettings: GameplaySettings;
   updateGameplaySettings: (updates: Partial<GameplaySettings>) => void;
-  voxelHotbar: VoxelHotbarProps;
-  updateVoxelHotbar: (updates: Partial<VoxelHotbarProps>) => void;
   toggleSidebar: () => void;
   toggleBottomPanel: () => void;
   toggleInspector: () => void;
@@ -2500,22 +2468,16 @@ export const useStore = create<EngineState>()(
         if (msg.actions) {
           for (const patch of msg.actions) {
             if (patch.cmd === 'add_object' && patch.params) {
-              const { type, customName, color, voxelHotbarProps } = patch.params;
-              if (type === 'voxel_hotbar' || voxelHotbarProps) {
-                if (voxelHotbarProps) {
-                  get().updateVoxelHotbar(voxelHotbarProps);
-                }
-              } else {
-                get().addPrimitive(type || 'cube');
-                const objs = get().objects;
-                const newObj = objs[objs.length - 1];
-                if (newObj) {
-                  const updates: Partial<SceneObject> = {};
-                  if (customName) updates.name = customName;
-                  if (color) updates.material = { ...newObj.material, color };
-                  if (Object.keys(updates).length > 0) {
-                    get().updateObject(newObj.id, updates);
-                  }
+              const { type, customName, color } = patch.params;
+              get().addPrimitive(type || 'cube');
+              const objs = get().objects;
+              const newObj = objs[objs.length - 1];
+              if (newObj) {
+                const updates: Partial<SceneObject> = {};
+                if (customName) updates.name = customName;
+                if (color) updates.material = { ...newObj.material, color };
+                if (Object.keys(updates).length > 0) {
+                  get().updateObject(newObj.id, updates);
                 }
               }
             } else if (patch.cmd === 'delete_object') {
@@ -2639,7 +2601,7 @@ export const useStore = create<EngineState>()(
           `\nGLOBAL ENVIRONMENT SETTINGS (modifiable via targetId "environment"):\n${JSON.stringify(currentEnv, null, 2)}`,
           ``,
           `AVAILABLE ENVIRONMENT PRESETS: city, sunset, dawn, night, warehouse, forest, apartment, studio, park, lobby`,
-          `AVAILABLE CLOUD TYPES: volumetric, flat, cirrus, voxel, nimbus, snow, blizzard`,
+          `AVAILABLE CLOUD TYPES: volumetric, flat, cirrus, nimbus, snow, blizzard`,
           `AVAILABLE WIND DIRECTIONS: N, NE, E, SE, S, SW, W, NW`,
           ``,
           `RESPONSE FORMAT: You MUST respond with valid JSON in ONE of these structures:`,
@@ -4628,10 +4590,6 @@ export const useStore = create<EngineState>()(
         showCrosshair: true,
         crosshairStyle: 'classic',
         crosshairColor: '#ffffff',
-        enableVoxelMining: true,
-        enableVoxelPlacing: true,
-        miningRange: 8.0,
-        placeCooldownMs: 150,
         cameraMode: 'third_person',
         fov: 75,
         pvpDamage: true,
@@ -4641,32 +4599,6 @@ export const useStore = create<EngineState>()(
       updateGameplaySettings: (updates) =>
         set((state) => ({
           gameplaySettings: { ...state.gameplaySettings, ...updates },
-        })),
-      voxelHotbar: {
-        slotCount: 9,
-        activeSlotIndex: 0,
-        showKeybinds: true,
-        styleVariant: 'minecraft',
-        autoHideInEditMode: false,
-        enableVoxelMining: true,
-        enableVoxelPlacing: true,
-        miningRange: 8.0,
-        placeCooldownMs: 150,
-        items: [
-          { id: 'item_1', name: 'Grass Block', geometry: 'box', color: '#44aa44', material: 'Grass' },
-          { id: 'item_2', name: 'Dirt Block', geometry: 'box', color: '#885522', material: 'Dirt' },
-          { id: 'item_3', name: 'Stone Block', geometry: 'box', color: '#777777', material: 'Slate' },
-          { id: 'item_4', name: 'Oak Wood', geometry: 'box', color: '#664422', material: 'Wood' },
-          { id: 'item_5', name: 'Leaves Block', geometry: 'box', color: '#227722', material: 'Grass' },
-          { id: 'item_6', name: 'Red Brick', geometry: 'box', color: '#aa3322', material: 'Plastic' },
-          { id: 'item_7', name: 'Sand Block', geometry: 'box', color: '#ddcc77', material: 'Sand' },
-          { id: 'item_8', name: 'Glass Block', geometry: 'box', color: '#88ddee', material: 'Glass' },
-          { id: 'item_9', name: 'Voxel Pyramid', geometry: 'pyramid', color: '#cc44bb', material: 'SmoothPlastic' },
-        ],
-      },
-      updateVoxelHotbar: (updates) =>
-        set((state) => ({
-          voxelHotbar: { ...state.voxelHotbar, ...updates },
         })),
       setSelectedIds: (ids) => set({ selectedIds: ids }),
       marqueeSelectedIds: [],
@@ -5031,11 +4963,6 @@ export const useStore = create<EngineState>()(
             },
           });
           toast.success('Motor6D Joint Created', part0Id && part1Id ? 'Connected selected parts!' : 'Created Motor6D joint node');
-          return;
-        }
-        if (type === 'voxel_hotbar') {
-          state.selectObject('gameplay_settings');
-          toast.success('Voxel Hotbar HUD Configured', 'Opened Gameplay Settings to configure Voxel HUD overlay.');
           return;
         }
         if (type === 'group') {

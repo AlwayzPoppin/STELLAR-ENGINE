@@ -3588,7 +3588,7 @@ function IndividualCloud({
   z: number;
   scale: number;
   speedMultiplier: number;
-  cloudsType: 'volumetric' | 'flat' | 'voxel' | 'nimbus' | 'snow' | 'blizzard';
+  cloudsType: 'volumetric' | 'flat' | 'nimbus' | 'snow' | 'blizzard';
   currentHour: number;
 }) {
   const environment = useStore((s) => s.environment);
@@ -3632,8 +3632,6 @@ function IndividualCloud({
     <group ref={groupRef}>
       {cloudsType === 'flat' ? (
         <FlatCloudCluster position={[0, 0, 0]} scale={1} currentHour={currentHour} />
-      ) : cloudsType === 'voxel' ? (
-        <VoxelCloudCluster position={[0, 0, 0]} scale={1} currentHour={currentHour} />
       ) : cloudsType === 'snow' ? (
         <SnowCloudCluster position={[0, 0, 0]} scale={1} currentHour={currentHour} />
       ) : (
@@ -3888,7 +3886,7 @@ function FlatCloudCluster({
 
   return (
     <group position={position} scale={[scale, scale, scale]}>
-      {/* Low-poly horizontal flat clouds layers - Opaque for perfect voxel blending */}
+      {/* Low-poly horizontal flat clouds layers */}
       {/* Base Layer */}
       <mesh castShadow receiveShadow>
         <boxGeometry args={[30 * environment.cloudsDensity, 1.2 * environment.cloudsDensity, 16 * environment.cloudsDensity]} />
@@ -3915,56 +3913,6 @@ function FlatCloudCluster({
           roughness={0.95}
           metalness={0.0}
         />
-      </mesh>
-    </group>
-  );
-}
-
-function VoxelCloudCluster({
-  position,
-  scale = 1,
-  currentHour,
-}: {
-  position: [number, number, number];
-  scale?: number;
-  currentHour: number;
-}) {
-  const environment = useStore((s) => s.environment);
-  const cloudColor = useMemo(() => getCloudColor(currentHour), [currentHour]);
-  const d = environment.cloudsDensity;
-
-  return (
-    <group position={position} scale={[scale, scale, scale]}>
-      {/* Voxel / Chiseled isometric step-cube formations */}
-      {/* Base Center Block */}
-      <mesh castShadow receiveShadow>
-        <boxGeometry args={[11 * d, 6 * d, 11 * d]} />
-        <meshStandardMaterial color={cloudColor} roughness={0.95} metalness={0.0} />
-      </mesh>
-      {/* Right Step Block */}
-      <mesh position={[5.5 * d, 0.5 * d, -2 * d]} castShadow receiveShadow>
-        <boxGeometry args={[8 * d, 4 * d, 8 * d]} />
-        <meshStandardMaterial color={cloudColor} roughness={0.95} metalness={0.0} />
-      </mesh>
-      {/* Left Step Block */}
-      <mesh position={[-5.5 * d, -1 * d, 2 * d]} castShadow receiveShadow>
-        <boxGeometry args={[7 * d, 4 * d, 7 * d]} />
-        <meshStandardMaterial color={cloudColor} roughness={0.95} metalness={0.0} />
-      </mesh>
-      {/* Top Cap Block */}
-      <mesh position={[0, 4.5 * d, 0]} castShadow receiveShadow>
-        <boxGeometry args={[7 * d, 3 * d, 7 * d]} />
-        <meshStandardMaterial color={cloudColor} roughness={0.95} metalness={0.0} />
-      </mesh>
-      {/* Front Step Block */}
-      <mesh position={[2 * d, -0.5 * d, 5.5 * d]} castShadow receiveShadow>
-        <boxGeometry args={[6 * d, 3 * d, 6 * d]} />
-        <meshStandardMaterial color={cloudColor} roughness={0.95} metalness={0.0} />
-      </mesh>
-      {/* Back Step Block */}
-      <mesh position={[-2 * d, 0 * d, -5.5 * d]} castShadow receiveShadow>
-        <boxGeometry args={[6 * d, 3 * d, 6 * d]} />
-        <meshStandardMaterial color={cloudColor} roughness={0.95} metalness={0.0} />
       </mesh>
     </group>
   );

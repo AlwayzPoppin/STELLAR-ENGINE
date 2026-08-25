@@ -519,7 +519,7 @@ export default function ScriptEditorView({ assetId }: Props) {
           <button
             type="button"
             onClick={handleRunScript}
-            title="Run Script & Instantiate Voxels/Models in 3D Scene"
+            title="Run Script & Instantiate Models in 3D Scene"
             className="flex items-center gap-1.5 px-3 py-1 text-[10px] font-bold bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-400 rounded transition-all cursor-pointer shadow-sm"
           >
             <Play size={12} className="fill-current text-emerald-400" />

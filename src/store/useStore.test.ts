@@ -128,12 +128,12 @@ describe('useStore', () => {
     expect((useStore as any).temporal.getState().futureStates.length).toBe(0);
   });
 
-  it('should recursively delete all child objects and voxel parts when parent folder/model is deleted', () => {
+  it('should recursively delete all child objects when parent folder/model is deleted', () => {
     const state = useStore.getState();
-    const parentId = 'titan_tv_man_model';
+    const parentId = 'test_group_model';
     state.addObject({
       id: parentId,
-      name: 'TitanTVMan',
+      name: 'TestModel',
       type: 'group',
       position: [0, 0, 0],
       rotation: [0, 0, 0],
@@ -141,8 +141,8 @@ describe('useStore', () => {
     });
 
     state.addObject({
-      id: 'voxel_child_1',
-      name: 'Voxel_1',
+      id: 'child_part_1',
+      name: 'Part_1',
       type: 'mesh',
       geometry: 'box',
       position: [0, 1, 0],
@@ -152,8 +152,8 @@ describe('useStore', () => {
     });
 
     state.addObject({
-      id: 'voxel_child_2',
-      name: 'Voxel_2',
+      id: 'child_part_2',
+      name: 'Part_2',
       type: 'mesh',
       geometry: 'box',
       position: [0, 2, 0],
@@ -163,16 +163,16 @@ describe('useStore', () => {
     });
 
     expect(useStore.getState().objects.some((o) => o.id === parentId)).toBe(true);
-    expect(useStore.getState().objects.some((o) => o.id === 'voxel_child_1')).toBe(true);
-    expect(useStore.getState().objects.some((o) => o.id === 'voxel_child_2')).toBe(true);
+    expect(useStore.getState().objects.some((o) => o.id === 'child_part_1')).toBe(true);
+    expect(useStore.getState().objects.some((o) => o.id === 'child_part_2')).toBe(true);
 
     // Delete parent model folder
     useStore.getState().deleteObject(parentId);
 
     // Verify parent and ALL children are completely deleted!
     expect(useStore.getState().objects.some((o) => o.id === parentId)).toBe(false);
-    expect(useStore.getState().objects.some((o) => o.id === 'voxel_child_1')).toBe(false);
-    expect(useStore.getState().objects.some((o) => o.id === 'voxel_child_2')).toBe(false);
+    expect(useStore.getState().objects.some((o) => o.id === 'child_part_1')).toBe(false);
+    expect(useStore.getState().objects.some((o) => o.id === 'child_part_2')).toBe(false);
   });
 
   // ===== Multi-scene tests =====

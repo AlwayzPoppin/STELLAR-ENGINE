@@ -16,7 +16,6 @@ import BoneHierarchy from './components/BoneHierarchy';
 import TimelinePanel from './components/TimelinePanel';
 import AiAssistantPanel from './components/AiAssistantPanel';
 import AnimationSidebar from './components/AnimationSidebar';
-import VoxelHotbarOverlay from './components/VoxelHotbarOverlay';
 import AutosaveRecoveryModal from './components/AutosaveRecoveryModal';
 import StatusBar from './components/StatusBar';
 
@@ -230,7 +229,6 @@ export default function App() {
 
       <StatusBar />
       <ContextMenu />
-      <VoxelHotbarOverlay />
       <AutosaveRecoveryModal />
     </div>
   );

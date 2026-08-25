@@ -334,10 +334,6 @@ export default function InspectorPanel() {
       showCrosshair: true,
       crosshairStyle: 'classic',
       crosshairColor: '#ffffff',
-      enableVoxelMining: true,
-      enableVoxelPlacing: true,
-      miningRange: 8.0,
-      placeCooldownMs: 150,
       cameraMode: 'third_person',
       fov: 75,
       pvpDamage: true,
@@ -458,98 +454,6 @@ export default function InspectorPanel() {
               </div>
             </div>
           </Section>
-
-          {/* Voxel Block Hotbar (HUD) Configuration */}
-          {(() => {
-            const voxelHotbar = useStore.getState().voxelHotbar;
-            const updateVoxelHotbar = useStore.getState().updateVoxelHotbar;
-            if (!voxelHotbar) return null;
-
-            return (
-              <Section title="Voxel Block Hotbar (HUD)" icon={Layers} colorClass="text-cyan-400">
-                <div className="space-y-3 p-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-neutral-400">Slot Count (1-9)</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={9}
-                      value={voxelHotbar.slotCount}
-                      onChange={(e) => {
-                        const val = Math.min(9, Math.max(1, parseInt(e.target.value, 10) || 9));
-                        updateVoxelHotbar({ slotCount: val });
-                      }}
-                      className="w-16 bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-right text-xs text-white"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-neutral-400">Show Keybind Hints (1-9)</span>
-                    <input
-                      type="checkbox"
-                      checked={voxelHotbar.showKeybinds}
-                      onChange={(e) => {
-                        updateVoxelHotbar({ showKeybinds: e.target.checked });
-                      }}
-                      className="rounded border-neutral-800 bg-neutral-900 text-sky-500 focus:ring-0 cursor-pointer"
-                    />
-                  </div>
-
-                  <div className="text-xs space-y-1.5 pt-2 border-t border-neutral-800/60">
-                    <span className="font-bold text-neutral-300 block mb-1">Configured Hotbar Items ({voxelHotbar.items.length})</span>
-                    {voxelHotbar.items.map((item, idx) => (
-                      <div key={item.id || idx} className="flex items-center gap-2 bg-neutral-900/60 p-2 rounded-lg border border-neutral-800">
-                        <span className="w-4 font-mono font-bold text-neutral-500 text-[10px]">{idx + 1}</span>
-                        <input
-                          type="color"
-                          value={item.color}
-                          onChange={(e) => {
-                            const newItems = [...voxelHotbar.items];
-                            newItems[idx] = { ...newItems[idx], color: e.target.value };
-                            updateVoxelHotbar({ items: newItems });
-                          }}
-                          className="w-6 h-6 rounded cursor-pointer border border-white/20 bg-transparent p-0"
-                        />
-                        <input
-                          type="text"
-                          value={item.name}
-                          onChange={(e) => {
-                            const newItems = [...voxelHotbar.items];
-                            newItems[idx] = { ...newItems[idx], name: e.target.value };
-                            updateVoxelHotbar({ items: newItems });
-                          }}
-                          className="flex-1 bg-transparent text-xs text-white border-b border-transparent hover:border-neutral-700 focus:border-sky-500 focus:outline-none px-1"
-                        />
-                        <select
-                          value={item.geometry}
-                          onChange={(e) => {
-                            const newItems = [...voxelHotbar.items];
-                            newItems[idx] = { ...newItems[idx], geometry: e.target.value as any };
-                            updateVoxelHotbar({ items: newItems });
-                          }}
-                          className="bg-neutral-800 text-[10px] text-neutral-300 rounded px-1.5 py-0.5 border border-neutral-700"
-                        >
-                          <option value="box">Cube</option>
-                          <option value="pyramid">Pyramid</option>
-                          <option value="cone">Cone</option>
-                          <option value="cylinder">Cylinder</option>
-                          <option value="sphere">Sphere</option>
-                          <option value="wedge">Wedge</option>
-                          <option value="torus">Torus</option>
-                          <option value="roundedCube">Rounded Cube</option>
-                          <option value="teardrop">Teardrop / Egg</option>
-                          <option value="wingBlade">Wing / Fin / Scythe</option>
-                          <option value="curvedHorn">Curved Horn / Claw</option>
-                          <option value="taperedTorso">Tapered Torso / Pelvis</option>
-                          <option value="forearm">Forearm / Leg Limb</option>
-                        </select>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </Section>
-            );
-          })()}
         </div>
       </div>
     );
@@ -833,7 +737,6 @@ export default function InspectorPanel() {
                       <option value="flat">🌤️ Flat Stratus Layer</option>
                       <option value="cirrus">🌫️ Wispy Cirrus</option>
                       <option value="nimbus">🌧️ Storm Nimbus</option>
-                      <option value="voxel">🧊 Voxel Style</option>
                       <option value="blizzard">🌨️ Blizzard</option>
                     </select>
                   </div>
@@ -1900,7 +1803,7 @@ export default function InspectorPanel() {
                 <option value="realistic">Realistic Puff (Wispy)</option>
                 <option value="circle">Soft Circle (Fluffy)</option>
                 <option value="spark">Glow Spark (Sharp)</option>
-                <option value="square">Digital Square (Voxel)</option>
+                <option value="square">Digital Square</option>
               </select>
             </div>
 
@@ -3000,21 +2903,6 @@ export default function InspectorPanel() {
         {(selectedObj.type === 'SUN' || selectedObj.type === 'MOON' || selectedObj.id === 'sun-light' || selectedObj.id === 'moon-light') && (
           <Section title="Celestial Properties & Texture" icon={Sun} colorClass="text-amber-400">
             <div className="space-y-3">
-              {/* Voxel Sun / Moon Type Dropdown */}
-              <div className="grid grid-cols-[90px_1fr] items-center gap-2 pb-2 border-b border-border/40">
-                <span className="text-[11px] text-text-secondary font-medium">Voxel Type</span>
-                <select
-                  className="bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-md w-full font-mono text-[11px] focus:border-amber-400 outline-none cursor-pointer"
-                  value={selectedObj.voxelCelestialType || 'sphere'}
-                  onChange={(e) => updateObject(selectedObj.id, { voxelCelestialType: e.target.value as any })}
-                >
-                  <option value="sphere">🌐 Classic Round Sphere</option>
-                  <option value="cube">🧊 Voxel Block (Cubic)</option>
-                  <option value="diamond">💎 Voxel Octahedron Diamond</option>
-                  <option value="pixel_ring">🔳 Pixelated Celestial Disc (Solid)</option>
-                </select>
-              </div>
-
               <div className="flex flex-col gap-2">
                 <label className="text-xs text-text-secondary font-medium">Surface Texture</label>
 
