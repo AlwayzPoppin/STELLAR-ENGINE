@@ -1046,6 +1046,20 @@ function EnginePreferencesModal() {
               <option value="ultra">Ultra (8192x8192 Cascaded Shadows)</option>
             </select>
           </div>
+
+          {/* Autosave Recovery Prompt on Startup */}
+          <div className="flex items-center justify-between bg-neutral-900/40 p-3 rounded-lg border border-border/40">
+            <div className="flex flex-col">
+              <span className="text-white font-medium">Session Recovery Prompt</span>
+              <span className="text-[10px] text-text-secondary">Prompt to restore autosaved session or start fresh on startup</span>
+            </div>
+            <input
+              type="checkbox"
+              checked={prefs.promptSessionRecovery ?? true}
+              onChange={(e) => updatePrefs({ promptSessionRecovery: e.target.checked })}
+              className="w-4 h-4 rounded border-border bg-bg-deep text-sky-400 accent-sky-400 cursor-pointer"
+            />
+          </div>
         </div>
 
         {/* Modal Footer */}

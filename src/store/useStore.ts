@@ -663,6 +663,7 @@ export interface EnginePreferences {
   godRaysEnabled: boolean;
   showFpsCounter: boolean;
   shadowQuality: 'low' | 'medium' | 'high' | 'ultra';
+  promptSessionRecovery?: boolean;
 }
 
 export interface StoreState {
@@ -852,6 +853,16 @@ export interface StoreState {
   setPreferencesModalOpen: (open: boolean) => void;
   enginePreferences: EnginePreferences;
   updateEnginePreferences: (updates: Partial<EnginePreferences>) => void;
+  showRecoveryModal: boolean;
+  setShowRecoveryModal: (show: boolean) => void;
+  recoverySessionData: {
+    projectName: string;
+    objectCount: number;
+    timestamp: number | null;
+  } | null;
+  setRecoverySessionData: (data: { projectName: string; objectCount: number; timestamp: number | null } | null) => void;
+  restoreSession: () => void;
+  startFreshSession: () => void;
   gameplaySettings: GameplaySettings;
   updateGameplaySettings: (updates: Partial<GameplaySettings>) => void;
   voxelHotbar: VoxelHotbarProps;
@@ -1813,6 +1824,7 @@ export const useStore = create<EngineState>()(
           godRaysEnabled: true,
           showFpsCounter: true,
           shadowQuality: 'medium',
+          promptSessionRecovery: true,
         };
         try {
           const saved = typeof window !== 'undefined' ? localStorage.getItem('stellar_engine_preferences') : null;
@@ -1824,6 +1836,27 @@ export const useStore = create<EngineState>()(
         }
         return defaults;
       })(),
+      showRecoveryModal: false,
+      setShowRecoveryModal: (show) => set({ showRecoveryModal: show }),
+      recoverySessionData: null,
+      setRecoverySessionData: (data) => set({ recoverySessionData: data }),
+      restoreSession: () => {
+        set({ showRecoveryModal: false });
+        toast.success('Session Restored', 'Restored previous workspace session.');
+      },
+      startFreshSession: () => {
+        get().startNewScene();
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('stellar-engine-autosave');
+          }
+          idbWorkspaceEngine.removeItem('stellar-engine-autosave');
+        } catch (err) {
+          console.error('Failed to clear autosave cache:', err);
+        }
+        set({ showRecoveryModal: false });
+        toast.success('Fresh Workspace', 'Cleared autosave cache and started fresh scene.');
+      },
       updateEnginePreferences: (updates) =>
         set((state) => {
           const updated = { ...state.enginePreferences, ...updates };
@@ -6793,6 +6826,17 @@ self.traverse((child) => {
               } else {
                 updates.objects = rebuiltActiveObjects;
               }
+            }
+
+            const objectCount = (updates.objects || state.objects || []).length;
+            const prefPrompt = state.enginePreferences?.promptSessionRecovery !== false;
+            if (prefPrompt && objectCount > 0) {
+              updates.showRecoveryModal = true;
+              updates.recoverySessionData = {
+                projectName: state.projectName || 'Previous Session',
+                objectCount,
+                timestamp: Date.now(),
+              };
             }
 
             updates.hasHydrated = true;
