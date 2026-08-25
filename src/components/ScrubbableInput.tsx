@@ -9,6 +9,17 @@ interface ScrubbableInputProps {
   precision?: number;
 }
 
+export function computeScrubValue(
+  startValue: number,
+  deltaX: number,
+  step: number = 0.1,
+  precision: number = 2
+): number {
+  const newValue = startValue + deltaX * step;
+  const factor = Math.pow(10, precision);
+  return Math.round(newValue * factor) / factor;
+}
+
 export const ScrubbableInput = ({ label, value, onChange, step = 0.1, precision = 2 }: ScrubbableInputProps) => {
   const [isDragging, setIsDragging] = useState(false);
   const startXRef = useRef(0);
@@ -18,7 +29,12 @@ export const ScrubbableInput = ({ label, value, onChange, step = 0.1, precision 
   // Snapshot of objects array before the scrub begins (for revert-and-commit)
   const initialObjectsRef = useRef<any>(null);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent) => {
+    // Capture pointer so pointermove and pointerup are delivered even if dragged outside window/iframes
+    try {
+      (e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
+    } catch {}
+
     // Save snapshot of tracked state BEFORE pausing
     const state = useStore.getState();
     initialObjectsRef.current = state.objects;
@@ -36,17 +52,14 @@ export const ScrubbableInput = ({ label, value, onChange, step = 0.1, precision 
   useEffect(() => {
     if (!isDragging) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const handlePointerMove = (e: PointerEvent | MouseEvent) => {
       const deltaX = e.clientX - startXRef.current;
-      const newValue = startValueRef.current + deltaX * step;
-      // Round to precision
-      const factor = Math.pow(10, precision);
-      const roundedValue = Math.round(newValue * factor) / factor;
+      const roundedValue = computeScrubValue(startValueRef.current, deltaX, step, precision);
       lastValueRef.current = roundedValue;
       onChange(roundedValue);
     };
 
-    const handleMouseUp = () => {
+    const handlePointerUp = () => {
       setIsDragging(false);
       document.body.style.cursor = 'default';
 
@@ -70,12 +83,16 @@ export const ScrubbableInput = ({ label, value, onChange, step = 0.1, precision 
       initialObjectsRef.current = null;
     };
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('blur', handlePointerUp);
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('blur', handlePointerUp);
       document.body.style.cursor = 'default';
     };
   }, [isDragging, onChange, step, precision]);
@@ -84,7 +101,8 @@ export const ScrubbableInput = ({ label, value, onChange, step = 0.1, precision 
     <div className="relative flex-1">
       <span
         className={`absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold select-none transition-colors ${isDragging ? 'text-accent cursor-ew-resize' : 'text-text-secondary/50 cursor-ew-resize hover:text-text-primary'}`}
-        onMouseDown={handleMouseDown}
+        onPointerDown={handlePointerDown}
+        onMouseDown={handlePointerDown as any}
         style={{ filter: isDragging ? 'drop-shadow(0 0 2px #38bdf8)' : 'none' }}
       >
         {label}
