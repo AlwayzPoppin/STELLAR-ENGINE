@@ -70,4 +70,14 @@ describe('AssetStagingManager queue and preloading', () => {
     await AssetStagingManager.stageAsset('/models/warrior.fbx');
     expect(AssetStagingManager.isStaged('/models/warrior.fbx')).toBe(true);
   });
+
+  it('should utilize requestIdleCallback when available for background queue processing', async () => {
+    const idleSpy = vi.fn((cb, opts) => setTimeout(cb, 0));
+    (global as any).requestIdleCallback = idleSpy;
+
+    await AssetStagingManager.stageAsset('/models/idle_check.glb');
+
+    expect(idleSpy).toHaveBeenCalledWith(expect.any(Function), { timeout: 50 });
+    delete (global as any).requestIdleCallback;
+  });
 });

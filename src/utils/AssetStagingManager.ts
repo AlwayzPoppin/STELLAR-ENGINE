@@ -150,8 +150,12 @@ class AssetStagingManagerClass {
           this.activeCount--;
           this.inFlight.delete(url);
           this.emitProgress();
-          // Stagger next asset to allow 60 FPS frame render
-          setTimeout(() => this.processNext(), 50);
+          // Stagger next asset using requestIdleCallback to yield to rendering and eliminate frame drops
+          if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(this.processNext.bind(this), { timeout: 50 });
+          } else {
+            setTimeout(() => this.processNext(), 50);
+          }
         }
       };
 
