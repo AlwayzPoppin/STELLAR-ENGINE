@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { executeRobloxLuaScript, transpileRobloxLuaToJS } from './robloxLuaEngine';
 import { useStore } from '../store/useStore';
+import { CollisionEventBroker } from '../physics/CollisionEventBroker';
 
 describe('robloxLuaEngine Advanced Primitives & Motor6D Rigs', () => {
   it('should instantiate pyramid, cone, torus, roundedCube and beveled parts', () => {
@@ -226,6 +227,39 @@ Engine.SetVariable("loreIntro", story)
     const vars = useStore.getState().gameVariables;
     expect(vars['dragonPower']).toBe(10000);
     expect(vars['loreIntro']).toContain('Long ago in the land of Robloxia');
+  });
+
+  it('should support Touched:Connect event signals hooked into CollisionEventBroker', () => {
+    const touchScript = `
+local Workspace = game:GetService("Workspace")
+local part = Instance.new("Part")
+part.Name = "TouchPad"
+part.Parent = Workspace
+
+part.Touched:Connect(function(other)
+  Engine.SetVariable("lastTouchedBy", other.Name)
+end)
+`;
+
+    const result = executeRobloxLuaScript(touchScript);
+    expect(result.success).toBe(true);
+
+    const objects = useStore.getState().objects;
+    const touchPad = objects.find((o) => o.name === 'TouchPad');
+    expect(touchPad).toBeDefined();
+
+    // Trigger collision event via CollisionEventBroker
+    CollisionEventBroker.dispatch({
+      type: 'collision_enter',
+      targetId: touchPad?.id || '',
+      otherId: 'player_character',
+      otherObject: { id: 'player_character', name: 'RobloxPlayer' } as any,
+      force: 25,
+      timestamp: Date.now(),
+    });
+
+    const vars = useStore.getState().gameVariables;
+    expect(vars['lastTouchedBy']).toBe('RobloxPlayer');
   });
 });
 

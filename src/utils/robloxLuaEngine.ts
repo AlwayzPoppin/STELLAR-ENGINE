@@ -1,5 +1,6 @@
 import { useStore, SceneObject } from '../store/useStore';
 import { toast } from '../store/useToastStore';
+import { CollisionEventBroker } from '../physics/CollisionEventBroker';
 import * as luaparse from 'luaparse';
 
 // Roblox Material to Stellar Engine Material Mapper
@@ -512,6 +513,48 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
           );
           if (!found) return null;
           return createInstanceProxy('Part');
+        },
+        Touched: {
+          Connect: (...args: any[]) => {
+            const fn = typeof args[0] === 'function' ? args[0] : (typeof args[1] === 'function' ? args[1] : null);
+            if (!fn) return { Disconnect: () => {} };
+            const unsub = CollisionEventBroker.onObjectCollision(instanceData.id, (evt) => {
+              if (evt.type === 'collision_enter' || evt.type === 'trigger_enter') {
+                const otherPartId = evt.targetId === instanceData.id ? evt.otherId : evt.targetId;
+                const otherProxy = createInstanceProxy('Part');
+                otherProxy.Name = evt.otherObject?.name || otherPartId;
+                try {
+                  fn(otherProxy);
+                } catch (e: any) {
+                  console.error(`[Lua Touched Error]:`, e.message);
+                }
+              }
+            });
+            return {
+              Disconnect: () => unsub(),
+            };
+          },
+        },
+        TouchEnded: {
+          Connect: (...args: any[]) => {
+            const fn = typeof args[0] === 'function' ? args[0] : (typeof args[1] === 'function' ? args[1] : null);
+            if (!fn) return { Disconnect: () => {} };
+            const unsub = CollisionEventBroker.onObjectCollision(instanceData.id, (evt) => {
+              if (evt.type === 'collision_exit' || evt.type === 'trigger_exit') {
+                const otherPartId = evt.targetId === instanceData.id ? evt.otherId : evt.targetId;
+                const otherProxy = createInstanceProxy('Part');
+                otherProxy.Name = evt.otherObject?.name || otherPartId;
+                try {
+                  fn(otherProxy);
+                } catch (e: any) {
+                  console.error(`[Lua TouchEnded Error]:`, e.message);
+                }
+              }
+            });
+            return {
+              Disconnect: () => unsub(),
+            };
+          },
         },
         Destroy: () => {
           const state = useStore.getState();
