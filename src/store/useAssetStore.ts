@@ -416,26 +416,20 @@ export const useAssetStore = create<AssetStore>()(
               Object.assign(state, { assets: mergedAssets, assetMap: map, hasHydrated: true });
             }
 
-            // Pre-warm starter 3D models in staging queue during idle time
+            // Stagger starter model pre-warming after initial boot to prevent main thread frame drops
             if (typeof window !== 'undefined') {
-              const starterModels = mergedAssets.filter((a) => a.type === 'model' && a.url);
-              starterModels.forEach((a) => {
-                if (a.url) {
-                  AssetStagingManager.stageAsset(a.url, 'gltf').catch(() => {});
-                }
-              });
+              setTimeout(() => {
+                const starterModels = mergedAssets.filter((a) => a.type === 'model' && a.url);
+                starterModels.slice(0, 3).forEach((a) => {
+                  if (a.url) {
+                    AssetStagingManager.stageAsset(a.url, 'gltf').catch(() => {});
+                  }
+                });
+              }, 1500);
             }
           };
 
-          if (typeof window !== 'undefined' && typeof (window as any).requestIdleCallback === 'function') {
-            (window as any).requestIdleCallback(runHydration);
-          } else {
-            if (typeof window === 'undefined') {
-              runHydration();
-            } else {
-              setTimeout(runHydration, 100);
-            }
-          }
+          runHydration();
         }
       },
     }

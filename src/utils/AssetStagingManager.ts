@@ -40,8 +40,9 @@ class AssetStagingManagerClass {
   private inFlight = new Map<string, Promise<void>>();
   private stagedAssets = new Set<string>(); // Set of ready asset URLs
   private assetStatuses = new Map<string, StagingStatus>();
-  private maxConcurrency = 3;
+  private maxConcurrency = 1;
   private activeCount = 0;
+  private isProcessing = false;
 
   private progressListeners = new Set<ProgressListener>();
   private itemReadyListeners = new Set<ItemReadyListener>();
@@ -139,7 +140,8 @@ class AssetStagingManagerClass {
           this.activeCount--;
           this.inFlight.delete(url);
           this.emitProgress();
-          this.processNext();
+          // Stagger next asset to allow 60 FPS frame render
+          setTimeout(() => this.processNext(), 50);
         }
       };
 
@@ -173,7 +175,11 @@ class AssetStagingManagerClass {
       this.assetStatuses.set(nextItem.url, 'staging');
       const runFn = (nextItem as any)._run;
       if (typeof runFn === 'function') {
-        queueMicrotask(runFn);
+        if (typeof requestIdleCallback !== 'undefined') {
+          requestIdleCallback(() => runFn(), { timeout: 100 });
+        } else {
+          setTimeout(runFn, 16);
+        }
       }
     }
   }
