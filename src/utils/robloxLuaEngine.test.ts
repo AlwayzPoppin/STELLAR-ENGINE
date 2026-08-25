@@ -118,4 +118,73 @@ neck.Parent = torso
     const torsoObj = objects.find((o) => o.name === 'Torso');
     expect(headObj?.parentId).toBe(torsoObj?.id);
   });
+
+  it('should allow Lua scripts to read, set, and delete game variables via Engine', () => {
+    const varScript = `
+Engine.SetVariable("playerCoins", 250)
+Engine.SetVariable("hasKeycard", true)
+Engine.SetVariable("playerName", "Nova")
+`;
+
+    const result = executeRobloxLuaScript(varScript);
+    expect(result.success).toBe(true);
+
+    const vars = useStore.getState().gameVariables;
+    expect(vars['playerCoins']).toBe(250);
+    expect(vars['hasKeycard']).toBe(true);
+    expect(vars['playerName']).toBe('Nova');
+
+    // Test delete variable
+    const deleteScript = `
+Engine.DeleteVariable("tempFlag")
+Engine.SetVariable("bossDefeated", true)
+`;
+    useStore.getState().setGameVariable('tempFlag', 123);
+    executeRobloxLuaScript(deleteScript);
+    expect(useStore.getState().gameVariables['tempFlag']).toBeUndefined();
+    expect(useStore.getState().gameVariables['bossDefeated']).toBe(true);
+  });
+
+  it('should allow Lua scripts to progress quests and complete objectives via Engine', () => {
+    const state = useStore.getState();
+    const testQuestId = 'quest_slay_goblins';
+    state.addQuest({
+      id: testQuestId,
+      title: 'Slay Goblins',
+      description: 'Clear the goblin camp',
+      status: 'active',
+      rewardXp: 500,
+      objectives: [
+        {
+          id: 'obj_defeat_5',
+          description: 'Defeat 5 goblins',
+          type: 'defeat_enemy',
+          targetName: 'Goblin',
+          targetCount: 5,
+          currentCount: 0,
+          completed: false,
+        },
+      ],
+    });
+
+    const luaScript = `
+Engine.UpdateObjective("quest_slay_goblins", "obj_defeat_5", 3)
+`;
+    executeRobloxLuaScript(luaScript);
+
+    let quest = useStore.getState().quests.find((q) => q.id === testQuestId);
+    expect(quest?.objectives[0].currentCount).toBe(3);
+    expect(quest?.objectives[0].completed).toBe(false);
+
+    // Complete the objective
+    const completeScript = `
+Engine.CompleteObjective("quest_slay_goblins", "obj_defeat_5")
+`;
+    executeRobloxLuaScript(completeScript);
+
+    quest = useStore.getState().quests.find((q) => q.id === testQuestId);
+    expect(quest?.objectives[0].completed).toBe(true);
+    expect(quest?.status).toBe('completed');
+  });
 });
+

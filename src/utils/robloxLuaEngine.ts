@@ -678,6 +678,110 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
       SpawnParticles: (effectType: string, x: number, y: number, z: number) => {
         console.info(`[Engine Particle] ${effectType} at (${x}, ${y}, ${z})`);
       },
+
+      // ── Game Variables Bridge ──
+      SetVariable: (key: string, val: boolean | number | string) => {
+        useStore.getState().setGameVariable(key, val);
+      },
+      GetVariable: (key: string) => {
+        return useStore.getState().gameVariables[key];
+      },
+      DeleteVariable: (key: string) => {
+        useStore.getState().deleteGameVariable(key);
+      },
+      GetVariables: () => {
+        return { ...useStore.getState().gameVariables };
+      },
+
+      // ── Quests & Objectives Bridge ──
+      GetQuests: () => {
+        return useStore.getState().quests;
+      },
+      GetQuest: (questId: string) => {
+        const state = useStore.getState();
+        return state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+      },
+      StartQuest: (questId: string) => {
+        const state = useStore.getState();
+        const quest = state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        if (quest) {
+          state.updateQuest(quest.id, { status: 'active' });
+        }
+      },
+      CompleteQuest: (questId: string) => {
+        const state = useStore.getState();
+        const quest = state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        if (quest) {
+          const completedObjectives = quest.objectives.map((o) => ({ ...o, completed: true, currentCount: o.targetCount }));
+          state.updateQuest(quest.id, { status: 'completed', objectives: completedObjectives });
+          state.triggerScriptedEvents('on_quest_complete', quest.id);
+        }
+      },
+      CompleteObjective: (questId: string, objId: string) => {
+        const state = useStore.getState();
+        const quest = state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        if (quest) {
+          const updatedObjectives = quest.objectives.map((obj) => {
+            if (
+              obj.id === objId ||
+              obj.description.toLowerCase().includes(objId.toLowerCase()) ||
+              obj.targetName.toLowerCase() === objId.toLowerCase()
+            ) {
+              return { ...obj, completed: true, currentCount: obj.targetCount };
+            }
+            return obj;
+          });
+          const allCompleted = updatedObjectives.length > 0 && updatedObjectives.every((o) => o.completed);
+          state.updateQuest(quest.id, {
+            objectives: updatedObjectives,
+            status: allCompleted ? 'completed' : quest.status,
+          });
+          if (allCompleted) {
+            state.triggerScriptedEvents('on_quest_complete', quest.id);
+          }
+        }
+      },
+      UpdateObjective: (questId: string, objId: string, count: number) => {
+        const state = useStore.getState();
+        const quest = state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        if (quest) {
+          const updatedObjectives = quest.objectives.map((obj) => {
+            if (
+              obj.id === objId ||
+              obj.description.toLowerCase().includes(objId.toLowerCase()) ||
+              obj.targetName.toLowerCase() === objId.toLowerCase()
+            ) {
+              const newCount = Math.max(0, count);
+              return { ...obj, currentCount: newCount, completed: newCount >= obj.targetCount };
+            }
+            return obj;
+          });
+          const allCompleted = updatedObjectives.length > 0 && updatedObjectives.every((o) => o.completed);
+          state.updateQuest(quest.id, {
+            objectives: updatedObjectives,
+            status: allCompleted ? 'completed' : quest.status,
+          });
+          if (allCompleted) {
+            state.triggerScriptedEvents('on_quest_complete', quest.id);
+          }
+        }
+      },
+
+      // ── Scripted Events & Dialogues Bridge ──
+      TriggerEvent: (triggerType: string, targetId?: string) => {
+        useStore.getState().triggerScriptedEvents(triggerType as any, targetId);
+      },
+      ShowDialogue: (text: string, speakerName?: string, speakerId?: string) => {
+        useStore.getState().setActiveDialogue({
+          id: `dialogue_${Date.now()}`,
+          text,
+          speakerName,
+          speakerId,
+        });
+      },
+      CloseDialogue: () => {
+        useStore.getState().setActiveDialogue(null);
+      },
     };
 
     const luaTable = {
