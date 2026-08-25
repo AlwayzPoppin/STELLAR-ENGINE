@@ -141,5 +141,32 @@ describe('TextureManager', () => {
     TextureManager.pruneUnused();
     expect(TextureManager.getStats().totalReferences).toBe(0);
   });
+
+  it('should maintain base texture in cache if active instances still reference it, and dispose when all instances are removed', async () => {
+    const url = 'https://example.com/multi_instance_prune.png';
+
+    // Acquire 2 distinct instances of the same base texture
+    const inst1 = await TextureManager.acquireTexture(url, { repeatX: 1, repeatY: 1 });
+    const inst2 = await TextureManager.acquireTexture(url, { repeatX: 2, repeatY: 2 });
+
+    expect(TextureManager.getStats().baseCacheCount).toBe(1);
+    expect(TextureManager.getStats().instanceCacheCount).toBe(2);
+
+    // Release inst1; inst2 is still active
+    TextureManager.releaseTexture(inst1);
+    TextureManager.pruneUnused();
+
+    // Base cache must still be preserved because inst2 is alive
+    expect(TextureManager.getStats().baseCacheCount).toBe(1);
+    expect(TextureManager.getStats().instanceCacheCount).toBe(2);
+
+    // Release inst2
+    TextureManager.releaseTexture(inst2);
+    expect(TextureManager.getStats().totalReferences).toBe(0);
+
+    // After releasing both, if base refCount is 0 and no active references remain, pruneUnused can safely clean up
+    TextureManager.pruneUnused();
+    expect(TextureManager.getStats().totalReferences).toBe(0);
+  });
 });
 

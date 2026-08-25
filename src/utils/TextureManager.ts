@@ -76,6 +76,9 @@ class TextureManagerClass {
   // Instance cache: Composite key -> InstanceCacheEntry
   private instanceCache = new Map<string, InstanceCacheEntry>();
 
+  // Reverse lookup: baseKey (resolved URL) -> Set of active instance keys (O(1) lookup during GC)
+  private baseKeyToInstanceKeys = new Map<string, Set<string>>();
+
   // UUID lookup: Texture.uuid -> Composite instance key
   private uuidToInstanceKey = new Map<string, string>();
 
@@ -128,6 +131,36 @@ class TextureManagerClass {
     const isWater = !!opts.isWater;
 
     return `${resolvedUrl}|rx:${rx}|ry:${ry}|ox:${ox}|oy:${oy}|rot:${rot}|ws:${wrapS}|wt:${wrapT}|nm:${isNormal}|wtz:${isWater}`;
+  }
+
+  /**
+   * Helper to insert an instance into instanceCache and register in baseKey reverse-lookup Set
+   */
+  private setInstanceInCache(instanceKey: string, entry: InstanceCacheEntry): void {
+    this.instanceCache.set(instanceKey, entry);
+    let instanceSet = this.baseKeyToInstanceKeys.get(entry.baseKey);
+    if (!instanceSet) {
+      instanceSet = new Set<string>();
+      this.baseKeyToInstanceKeys.set(entry.baseKey, instanceSet);
+    }
+    instanceSet.add(instanceKey);
+  }
+
+  /**
+   * Helper to remove an instance from instanceCache and unregister from baseKey reverse-lookup Set
+   */
+  private deleteInstanceFromCache(instanceKey: string): void {
+    const entry = this.instanceCache.get(instanceKey);
+    if (entry) {
+      const instanceSet = this.baseKeyToInstanceKeys.get(entry.baseKey);
+      if (instanceSet) {
+        instanceSet.delete(instanceKey);
+        if (instanceSet.size === 0) {
+          this.baseKeyToInstanceKeys.delete(entry.baseKey);
+        }
+      }
+      this.instanceCache.delete(instanceKey);
+    }
   }
 
   /**
@@ -272,7 +305,7 @@ class TextureManagerClass {
         }
         instanceTex.needsUpdate = true;
 
-        this.instanceCache.set(instanceKey, {
+        this.setInstanceInCache(instanceKey, {
           texture: instanceTex,
           baseKey: resolvedUrl,
           refCount: 1,
@@ -376,20 +409,15 @@ class TextureManagerClass {
       for (const [key, entry] of toRemove) {
         this.uuidToInstanceKey.delete(entry.texture.uuid);
         entry.texture.dispose();
-        this.instanceCache.delete(key);
+        this.deleteInstanceFromCache(key);
       }
     }
 
-    // Prune base cache entries that have 0 references and no active instances
+    // Prune base cache entries that have 0 references and no active instances (O(1) reverse lookup)
     for (const [url, baseEntry] of this.baseCache.entries()) {
       if (baseEntry.refCount <= 0) {
-        let hasActiveInstance = false;
-        for (const inst of this.instanceCache.values()) {
-          if (inst.baseKey === url) {
-            hasActiveInstance = true;
-            break;
-          }
-        }
+        const instanceSet = this.baseKeyToInstanceKeys.get(url);
+        const hasActiveInstance = Boolean(instanceSet && instanceSet.size > 0);
         if (!hasActiveInstance) {
           baseEntry.texture.dispose();
           this.baseCache.delete(url);
@@ -453,6 +481,7 @@ class TextureManagerClass {
       entry.texture.dispose();
     }
     this.instanceCache.clear();
+    this.baseKeyToInstanceKeys.clear();
     this.uuidToInstanceKey.clear();
 
     for (const entry of this.baseCache.values()) {
