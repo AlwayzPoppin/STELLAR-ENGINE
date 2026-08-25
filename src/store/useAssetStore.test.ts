@@ -1,49 +1,52 @@
-import { describe, it, expect } from 'vitest';
-import { useAssetStore } from './useAssetStore';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { processImportedFile, useAssetStore } from './useAssetStore';
 
-describe('useAssetStore', () => {
-  it('should have initial assets', () => {
-    const state = useAssetStore.getState();
-    expect(state.assets.length).toBeGreaterThan(0);
-    expect(state.assets[0].name).toBeDefined();
+describe('useAssetStore processImportedFile zero-copy URL creation', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('should add an asset', () => {
-    const state = useAssetStore.getState();
-    const initialLen = state.assets.length;
-    state.addAsset({ id: 'some_unique_id_xyz', name: 'New_Asset', type: 'model' });
-    
-    const updatedState = useAssetStore.getState();
-    expect(updatedState.assets.length).toBe(initialLen + 1);
-    expect(updatedState.assets.find(a => a.id === 'some_unique_id_xyz')?.name).toBe('New_Asset');
+  it('should create instant Blob URLs for 3D model files without Base64 encoding', async () => {
+    const mockCreateObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:http://localhost/mock-model-uuid');
+
+    const file = new File(['mock binary glb content'], 'Dragon_Model.glb', {
+      type: 'model/gltf-binary',
+    });
+
+    const asset = await processImportedFile(file);
+
+    expect(mockCreateObjectURL).toHaveBeenCalledWith(file);
+    expect(asset.type).toBe('model');
+    expect(asset.category).toBe('Models');
+    expect(asset.url).toBe('blob:http://localhost/mock-model-uuid');
+    expect(asset.content).toBeUndefined();
   });
 
-  it('should delete an asset', () => {
-    const state = useAssetStore.getState();
-    const initialLen = state.assets.length;
-    state.deleteAsset('some_unique_id_xyz'); // Delete the one we just added
-    
-    const updatedState = useAssetStore.getState();
-    expect(updatedState.assets.length).toBe(initialLen - 1);
-    expect(updatedState.assets.find(a => a.id === 'some_unique_id_xyz')).toBeUndefined();
+  it('should create instant Blob URLs for texture images', async () => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:http://localhost/mock-image-uuid');
+
+    const file = new File(['mock image png content'], 'Ground_Diffuse.png', {
+      type: 'image/png',
+    });
+
+    const asset = await processImportedFile(file);
+
+    expect(asset.type).toBe('image');
+    expect(asset.category).toBe('Textures');
+    expect(asset.url).toBe('blob:http://localhost/mock-image-uuid');
+    expect(asset.thumbnailUrl).toBe('blob:http://localhost/mock-image-uuid');
   });
 
-  it('should handle fetch assets failure', async () => {
-    // Mock fetch to fail
-    const originalFetch = global.fetch;
-    global.fetch = (async () => ({
-      ok: false,
-      status: 500,
-    })) as any;
-    
-    const state = useAssetStore.getState();
-    await state.fetchAssets();
-    
-    const updatedState = useAssetStore.getState();
-    expect(updatedState.error).toBe('Network response was not ok');
-    expect(updatedState.isLoading).toBe(false);
-    
-    // Restore fetch
-    global.fetch = originalFetch;
+  it('should read script text content as string', async () => {
+    const scriptSource = 'console.log("hello world");';
+    const file = new File([scriptSource], 'PlayerController.js', {
+      type: 'text/javascript',
+    });
+
+    const asset = await processImportedFile(file);
+
+    expect(asset.type).toBe('script');
+    expect(asset.category).toBe('Scripts');
+    expect(asset.content).toBe(scriptSource);
   });
 });

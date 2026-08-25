@@ -3,8 +3,10 @@ import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2, FileCode2, ImageIcon, Play, Box, Layers, Music, Compass } from 'lucide-react';
 import { useStore } from '../store/useStore';
-import { Asset } from '../store/useAssetStore';
+import { Asset, useAssetStore } from '../store/useAssetStore';
 import { toast } from '../store/useToastStore';
+import { formatDisplayUrl } from '../utils/format';
+import { AssetStagingManager } from '../utils/AssetStagingManager';
 
 // Get category metadata (colors, badges, styles)
 export const getCategoryMeta = (category: string) => {
@@ -101,11 +103,25 @@ export const getCategoryMeta = (category: string) => {
 };
 
 // Lazy Image Component with loading skeleton
-export function LazyImage({ src, alt, className }: { src: string; alt: string; className?: string }) {
-  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+export function LazyImage({
+  src,
+  alt,
+  className,
+  loading = 'lazy',
+  fetchPriority,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  loading?: 'lazy' | 'eager';
+  fetchPriority?: 'high' | 'low' | 'auto';
+}) {
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(loading === 'eager' ? src : null);
   const imgRef = useRef<HTMLImageElement>(null);
 
   useEffect(() => {
+    if (loading === 'eager') return;
+
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -121,7 +137,7 @@ export function LazyImage({ src, alt, className }: { src: string; alt: string; c
     }
 
     return () => observer.disconnect();
-  }, [src]);
+  }, [src, loading]);
 
   return (
     <div ref={imgRef} className={`relative overflow-hidden ${className}`}>
@@ -130,7 +146,8 @@ export function LazyImage({ src, alt, className }: { src: string; alt: string; c
           src={loadedSrc}
           alt={alt}
           className="w-full h-full object-cover transition-opacity duration-300 opacity-100"
-          loading="lazy"
+          loading={loading}
+          fetchPriority={fetchPriority}
         />
       ) : (
         <div className="w-full h-full bg-neutral-900 animate-pulse flex items-center justify-center">
@@ -249,6 +266,33 @@ export function AssetCard({
   const activePickerTarget = useStore((s) => s.activePickerTarget);
   const setActivePickerTarget = useStore((s) => s.setActivePickerTarget);
 
+  const renamingAssetId = useStore((s) => s.renamingAssetId);
+  const setRenamingAssetId = useStore((s) => s.setRenamingAssetId);
+  const isRenaming = renamingAssetId === asset.id;
+  const [tempName, setTempName] = useState(asset.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setTempName(asset.name);
+  }, [asset.name]);
+
+  useEffect(() => {
+    if (isRenaming && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isRenaming]);
+
+  const handleRenameSubmit = () => {
+    setRenamingAssetId(null);
+    const trimmed = tempName.trim();
+    if (trimmed && trimmed !== asset.name) {
+      useAssetStore.getState().updateAsset(asset.id, { name: trimmed });
+    } else {
+      setTempName(asset.name);
+    }
+  };
+
   const assetCat = asset.category || (
     asset.type === 'model' ? 'Models' :
     asset.type === 'image' ? 'Textures' :
@@ -256,7 +300,7 @@ export function AssetCard({
     asset.type === 'script' ? 'Scripts' :
     asset.type === 'scene' ? 'Scenes' :
     asset.type === 'audio' ? 'Audio' :
-    asset.type === 'prefab' ? 'Prefabs' : 'Models'
+    asset.type === 'prefab' || asset.type === 'primitive_prefab' ? 'Prefabs' : 'Models'
   );
 
   const meta = getCategoryMeta(assetCat);
@@ -264,6 +308,11 @@ export function AssetCard({
 
   const handlePointerEnter = () => {
     if (hoverTimer) clearTimeout(hoverTimer);
+
+    // Warm asset in background staging queue on hover
+    if (asset.url) {
+      AssetStagingManager.stageAsset(asset.url, asset.type as any).catch(() => {});
+    }
 
     const timer = setTimeout(() => {
       if (cardRef.current) {
@@ -316,21 +365,102 @@ export function AssetCard({
           ? 'border-accent shadow-[0_0_12px_rgba(56,189,248,0.3)] animate-pulse hover:scale-105'
           : `border-border/60 ${meta.glow} ${glowBorderClass}`
       }`}
-      draggable={!isPickingAsset}
+      draggable={!isPickingAsset && !isRenaming}
       onDragStart={(e) => {
         clearHoverState();
+        if (asset.url) {
+          AssetStagingManager.stageAsset(asset.url, asset.type as any).catch(() => {});
+        }
         e.dataTransfer.setData('application/json', JSON.stringify(asset));
       }}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
+      onContextMenu={(e) => {
+        if (!isPickingAsset) {
+          e.preventDefault();
+          e.stopPropagation();
+          clearHoverState();
+          useStore.getState().openContextMenu(e.clientX, e.clientY, 'asset', asset.id, asset);
+        }
+      }}
       onClick={() => {
         if (isPickingAsset) {
           clearHoverState();
           const { selectedIds, updateObject, objects } = useStore.getState();
           const selectedId = selectedIds[0] || null;
           const selectedObj = objects.find((o) => o.id === selectedId);
-          if (selectedObj) {
-            const pathVal = (asset as any).source || (asset as any).path || asset.url || asset.id;
+          const pathVal = asset.url || (asset as any).path || asset.id;
+          if (activePickerTarget === 'terrainSandTexture' || activePickerTarget === 'terrainDirtTexture') {
+            if (asset.type !== 'image') {
+              toast.error('Invalid Asset Type', 'Please select a texture (image) asset to map.');
+              return;
+            }
+            const { setBrushSettings } = useStore.getState();
+            if (activePickerTarget === 'terrainSandTexture') {
+              setBrushSettings({ sandTextureUrl: pathVal });
+            } else {
+              setBrushSettings({ dirtTextureUrl: pathVal });
+            }
+            setIsPickingAsset(false);
+            setActivePickerTarget(null);
+            toast.success('Texture Assigned', `Terrain ${activePickerTarget === 'terrainSandTexture' ? 'Sand' : 'Dirt'} texture updated.`);
+          } else if (activePickerTarget === 'celestialTexture') {
+            if (asset.type !== 'image' && (asset as any).type !== 'texture' && (asset as any).type !== 'material') {
+              toast.error('Invalid Asset Type', 'Please select a texture or image asset.');
+              return;
+            }
+            const targetId = selectedId || 'moon-light';
+            updateObject(targetId, {
+              textureUrl: pathVal,
+              textureName: asset.name,
+            });
+            toast.success('Texture Assigned', `${asset.name} assigned to celestial object.`);
+            setIsPickingAsset(false);
+            setActivePickerTarget(null);
+            return;
+          } else if (activePickerTarget === 'rainTexture' || activePickerTarget === 'snowTexture') {
+            if (asset.type !== 'image' && (asset as any).type !== 'texture' && (asset as any).type !== 'material') {
+              toast.error('Invalid Asset Type', 'Please select a texture or image asset.');
+              return;
+            }
+            const { updateEnvironment } = useStore.getState();
+            if (activePickerTarget === 'rainTexture') {
+              updateEnvironment({ rainTextureUrl: pathVal });
+            } else {
+              updateEnvironment({ snowTextureUrl: pathVal });
+            }
+            toast.success('Texture Assigned', `${asset.name} assigned as ${activePickerTarget === 'rainTexture' ? 'Rain' : 'Snow'} particle texture.`);
+            setIsPickingAsset(false);
+            setActivePickerTarget(null);
+            return;
+          } else if (activePickerTarget.startsWith('lensFlare')) {
+            if (asset.type !== 'image' && (asset as any).type !== 'texture' && (asset as any).type !== 'material') {
+              toast.error('Invalid Asset Type', 'Please select a texture or image asset.');
+              return;
+            }
+            const env = useStore.getState().environment;
+            const layers = env.lensFlareLayers || [];
+            const parts = activePickerTarget.split('_');
+            const targetType = parts[0];
+            const layerIdx = parts.length > 1 ? parseInt(parts[1], 10) : 0;
+            const updated = [...layers];
+            if (updated[layerIdx]) {
+              if (targetType === 'lensFlareSun') {
+                updated[layerIdx] = { ...updated[layerIdx], sunTextureUrl: pathVal, textureUrl: pathVal };
+              } else if (targetType === 'lensFlareMoon') {
+                updated[layerIdx] = { ...updated[layerIdx], moonTextureUrl: pathVal };
+              } else {
+                updated[layerIdx] = { ...updated[layerIdx], textureUrl: pathVal };
+              }
+            } else if (updated.length > 0) {
+              updated[0] = { ...updated[0], textureUrl: pathVal };
+            }
+            useStore.getState().updateEnvironment({ lensFlareLayers: updated });
+            toast.success('Lens Flare Updated', `${asset.name} assigned to Lens Flare Layer ${layerIdx + 1}`);
+            setIsPickingAsset(false);
+            setActivePickerTarget(null);
+            return;
+          } else if (selectedObj) {
             if (activePickerTarget === 'footstepAudioPath' || activePickerTarget === 'footstepAudioUrl') {
               if (asset.type !== 'audio') {
                 toast.error('Invalid Asset Type', 'Please select an audio asset.');
@@ -345,19 +475,58 @@ export function AssetCard({
                   }
                 });
               }
+            } else if (activePickerTarget === 'audioAsset' || (activePickerTarget && activePickerTarget.startsWith('audioUrl_'))) {
+              try {
+                if (asset.type !== 'audio' && !pathVal.endsWith('.mp3') && !pathVal.endsWith('.wav') && !pathVal.endsWith('.ogg')) {
+                  toast.error('Invalid Asset Type', `Asset type is ${asset.type}, expected audio.`);
+                  return;
+                }
+                const targetObjId = activePickerTarget.startsWith('audioUrl_')
+                  ? activePickerTarget.replace('audioUrl_', '')
+                  : selectedObj.id;
+                const targetObj = objects.find((o) => o.id === targetObjId) || selectedObj;
+                const currentAudioProps = targetObj.audioProps || {
+                  volume: 1,
+                  loop: true,
+                  refDistance: 1,
+                  maxDistance: 50,
+                  rolloffFactor: 1,
+                  distanceModel: 'inverse',
+                  autoplay: true,
+                  sourceType: 'point',
+                };
+                updateObject(targetObj.id, {
+                  audioProps: {
+                    ...currentAudioProps,
+                    assetId: asset.id,
+                    url: pathVal,
+                  }
+                });
+                toast.success('Audio Assigned', `${asset.name} linked to ${targetObj.name}.`);
+                setIsPickingAsset(false);
+                setActivePickerTarget(null);
+                return; // Early return to ensure it doesn't fall through
+              } catch (err: any) {
+                toast.error('Error in audioAsset', err.message || 'Unknown error');
+              }
             } else if (activePickerTarget === 'materialMap') {
               if (asset.type !== 'image') {
                 toast.error('Invalid Asset Type', 'Please select a texture (image) asset to map.');
                 return;
               }
-              if (selectedObj.material) {
-                updateObject(selectedObj.id, {
-                  material: {
-                    ...selectedObj.material,
-                    map: pathVal,
-                  }
-                });
-              }
+              const currentMat = selectedObj.material || {
+                color: '#ffffff',
+                roughness: 0.5,
+                metalness: 0.0,
+                envMapIntensity: 1.0,
+              };
+              updateObject(selectedObj.id, {
+                material: {
+                  ...currentMat,
+                  map: pathVal,
+                  customMap: pathVal,
+                }
+              });
             } else if (activePickerTarget === 'materialNormalMap') {
               if (asset.type !== 'image') {
                 toast.error('Invalid Asset Type', 'Please select a texture (image) asset to map.');
@@ -371,6 +540,45 @@ export function AssetCard({
                   }
                 });
               }
+            } else if (activePickerTarget.startsWith('faceMaterialMap_')) {
+              if (asset.type !== 'image') {
+                toast.error('Invalid Asset Type', 'Please select a texture (image) asset to map.');
+                return;
+              }
+              const face = activePickerTarget.split('_')[1];
+              // Update the texture child node's sourceId
+              const { objects } = useStore.getState();
+              const textureChild = objects.find(
+                (o) => o.parentId === selectedObj.id && (o.type === 'texture' || o.type === 'decal') && o.targetFace === face
+              );
+              if (textureChild) {
+                updateObject(textureChild.id, { sourceId: pathVal });
+              }
+              // Also update faceMaterials for viewport rendering compatibility
+              updateObject(selectedObj.id, {
+                faceMaterials: {
+                  ...selectedObj.faceMaterials,
+                  [face]: {
+                    ...selectedObj.faceMaterials?.[face as any],
+                    map: pathVal,
+                  }
+                } as any
+              });
+            } else if (activePickerTarget.startsWith('faceMaterialNormalMap_')) {
+              if (asset.type !== 'image') {
+                toast.error('Invalid Asset Type', 'Please select a texture (image) asset to map.');
+                return;
+              }
+              const face = activePickerTarget.split('_')[1];
+              updateObject(selectedObj.id, {
+                faceMaterials: {
+                  ...selectedObj.faceMaterials,
+                  [face]: {
+                    ...selectedObj.faceMaterials?.[face as any],
+                    normalMap: pathVal,
+                  }
+                } as any
+              });
             }
             setIsPickingAsset(false);
             setActivePickerTarget(null);
@@ -412,6 +620,8 @@ export function AssetCard({
             src={asset.thumbnailUrl}
             alt={asset.name}
             className="w-full h-full object-cover"
+            loading={asset.thumbnailUrl.includes('waternormals.jpg') ? 'eager' : 'lazy'}
+            fetchPriority={asset.thumbnailUrl.includes('waternormals.jpg') ? 'high' : undefined}
           />
         ) : (
           <AssetThumbnailPlaceholder type={asset.type} category={assetCat} />
@@ -420,9 +630,37 @@ export function AssetCard({
 
       {/* Metadata Strip - Bottom 30% */}
       <div className="h-[30%] w-full px-2 py-1 flex flex-col justify-between bg-bg-panel/70 border-t border-border/40">
-        <span className="text-[9px] font-semibold text-text-primary truncate w-full text-left" title={asset.name}>
-          {asset.name}
-        </span>
+        {isRenaming ? (
+          <input
+            ref={inputRef}
+            type="text"
+            value={tempName}
+            onChange={(e) => setTempName(e.target.value)}
+            onBlur={handleRenameSubmit}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRenameSubmit();
+              if (e.key === 'Escape') {
+                setRenamingAssetId(null);
+                setTempName(asset.name);
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onDoubleClick={(e) => e.stopPropagation()}
+            className="text-[9px] font-semibold text-text-primary bg-bg-deep border border-accent rounded px-1 py-0.5 focus:outline-none w-full"
+          />
+        ) : (
+          <span
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              clearHoverState();
+              setRenamingAssetId(asset.id);
+            }}
+            className="text-[9px] font-semibold text-text-primary truncate w-full text-left hover:text-accent transition-colors"
+            title="Double-click to rename"
+          >
+            {asset.name}
+          </span>
+        )}
         <div className="flex items-center justify-between w-full mb-0.5">
           <span className={`text-[7px] font-bold tracking-wider px-1 py-0.25 rounded-md border leading-none ${meta.badge}`}>
             {assetCat.toUpperCase().slice(0, 5)}
@@ -450,7 +688,7 @@ export function AssetPreviewPortal() {
     activePreviewAsset.type === 'script' ? 'Scripts' :
     activePreviewAsset.type === 'scene' ? 'Scenes' :
     activePreviewAsset.type === 'audio' ? 'Audio' :
-    activePreviewAsset.type === 'prefab' ? 'Prefabs' : 'Models'
+    activePreviewAsset.type === 'prefab' || activePreviewAsset.type === 'primitive_prefab' ? 'Prefabs' : 'Models'
   );
 
   const meta = getCategoryMeta(assetCat);
@@ -513,7 +751,9 @@ export function AssetPreviewPortal() {
         return (
           <div className="text-[8.5px] text-text-secondary space-y-1 w-full text-left">
             <div><span className="font-semibold text-text-primary">Format:</span> GLTF / GLB 3D Object</div>
-            <div className="truncate"><span className="font-semibold text-text-primary">Source:</span> {activePreviewAsset.url || 'Local Memory'}</div>
+            <div className="truncate" title={formatDisplayUrl(activePreviewAsset.url) || 'Local Memory'}>
+              <span className="font-semibold text-text-primary">Source:</span> {formatDisplayUrl(activePreviewAsset.url) || 'Local Memory'}
+            </div>
             <div><span className="font-semibold text-text-primary">Collider:</span> Auto Cuboid</div>
           </div>
         );
@@ -521,7 +761,9 @@ export function AssetPreviewPortal() {
         return (
           <div className="text-[8.5px] text-text-secondary space-y-0.5 w-full text-left">
             <div><span className="font-semibold text-text-primary">Asset Type:</span> {activePreviewAsset.type.toUpperCase()}</div>
-            <div className="truncate"><span className="font-semibold text-text-primary">URL:</span> {activePreviewAsset.url || 'None'}</div>
+            <div className="truncate" title={formatDisplayUrl(activePreviewAsset.url) || 'None'}>
+              <span className="font-semibold text-text-primary">URL:</span> {formatDisplayUrl(activePreviewAsset.url) || 'None'}
+            </div>
           </div>
         );
     }

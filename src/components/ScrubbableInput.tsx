@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { useStore } from '../store/useStore';
 
 interface ScrubbableInputProps {
   label: string;
@@ -12,11 +13,22 @@ export const ScrubbableInput = ({ label, value, onChange, step = 0.1, precision 
   const [isDragging, setIsDragging] = useState(false);
   const startXRef = useRef(0);
   const startValueRef = useRef(0);
+  const lastValueRef = useRef(value);
+  const initialValueRef = useRef(value);
+  // Snapshot of objects array before the scrub begins (for revert-and-commit)
+  const initialObjectsRef = useRef<any>(null);
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    // Save snapshot of tracked state BEFORE pausing
+    const state = useStore.getState();
+    initialObjectsRef.current = state.objects;
+
+    useStore.temporal.getState().pause();
     setIsDragging(true);
     startXRef.current = e.clientX;
     startValueRef.current = value;
+    lastValueRef.current = value;
+    initialValueRef.current = value;
     document.body.style.cursor = 'ew-resize';
     e.preventDefault(); // Prevent text selection
   };
@@ -30,12 +42,32 @@ export const ScrubbableInput = ({ label, value, onChange, step = 0.1, precision 
       // Round to precision
       const factor = Math.pow(10, precision);
       const roundedValue = Math.round(newValue * factor) / factor;
+      lastValueRef.current = roundedValue;
       onChange(roundedValue);
     };
 
     const handleMouseUp = () => {
       setIsDragging(false);
       document.body.style.cursor = 'default';
+
+      const finalValue = lastValueRef.current;
+      const initialValue = initialValueRef.current;
+
+      if (finalValue !== initialValue && initialObjectsRef.current) {
+        // 1. Revert to initial value while still paused (not tracked)
+        onChange(initialValue);
+
+        // 2. Resume tracking
+        useStore.temporal.getState().resume();
+
+        // 3. Commit the final value (this creates exactly one undo entry: initial → final)
+        onChange(finalValue);
+      } else {
+        // No change, just resume
+        useStore.temporal.getState().resume();
+      }
+
+      initialObjectsRef.current = null;
     };
 
     document.addEventListener('mousemove', handleMouseMove);

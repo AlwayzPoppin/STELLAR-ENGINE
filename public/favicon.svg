@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="1.0" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <!-- Stylized Engine Gear teeth (8 teeth) -->
+  <g transform="translate(16, 16)">
+    <circle r="11" fill="none" stroke="url(#g)" stroke-width="2" />
+    <path d="M -1.5,-12 L 1.5,-12 L 2,-9 L -2,-9 Z" fill="url(#g)" transform="rotate(0)" />
+    <path d="M -1.5,-12 L 1.5,-12 L 2,-9 L -2,-9 Z" fill="url(#g)" transform="rotate(45)" />
+    <path d="M -1.5,-12 L 1.5,-12 L 2,-9 L -2,-9 Z" fill="url(#g)" transform="rotate(90)" />
+    <path d="M -1.5,-12 L 1.5,-12 L 2,-9 L -2,-9 Z" fill="url(#g)" transform="rotate(135)" />
+    <path d="M -1.5,-12 L 1.5,-12 L 2,-9 L -2,-9 Z" fill="url(#g)" transform="rotate(180)" />
+    <path d="M -1.5,-12 L 1.5,-12 L 2,-9 L -2,-9 Z" fill="url(#g)" transform="rotate(225)" />
+    <path d="M -1.5,-12 L 1.5,-12 L 2,-9 L -2,-9 Z" fill="url(#g)" transform="rotate(270)" />
+    <path d="M -1.5,-12 L 1.5,-12 L 2,-9 L -2,-9 Z" fill="url(#g)" transform="rotate(315)" />
+    <!-- Stellar glowing star in the center -->
+    <path d="M 0,-7 L 1.8,-1.8 L 7,0 L 1.8,1.8 L 0,7 L -1.8,1.8 L -7,0 L -1.8,-1.8 Z" fill="#ffffff" filter="url(#glow)" />
+  </g>
+</svg>

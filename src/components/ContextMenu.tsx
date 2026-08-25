@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useStore } from '../store/useStore';
+import { useStore, SceneObject } from '../store/useStore';
 import { useAssetStore } from '../store/useAssetStore';
 import { toast } from '../store/useToastStore';
 import { createPortal } from 'react-dom';
@@ -20,6 +20,16 @@ import {
   Upload,
   Folder,
   Square,
+  Merge,
+  Download,
+  FolderPlus,
+  DoorOpen,
+  Bone,
+  Droplets,
+  Wind,
+  Flame,
+  FlipHorizontal,
+  FlipVertical,
 } from 'lucide-react';
 
 export default function ContextMenu() {
@@ -29,17 +39,29 @@ export default function ContextMenu() {
     closeContextMenu,
     deleteObject,
     duplicateObject,
+    duplicateAndMirrorObject,
     setRenamingId,
     addPrimitive,
     updateObject,
     clearScene,
-    createScriptForObject,
+    addScript,
     addObject,
     groupSelected,
+    ungroupSelected,
     copyProperties,
     pasteProperties,
     copiedProperties,
+    copiedObject,
+    copyObject,
+    pasteObject,
     openScript,
+    createScriptForObject,
+    renameAnimation,
+    deleteAnimation,
+    selectedIds,
+    csgOperation,
+    deleteScene,
+    duplicateScene,
   } = useStore();
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -144,7 +166,7 @@ export default function ContextMenu() {
     );
   }
 
-  const { x, y, targetId, type } = contextMenu!;
+  const { x, y, targetId, type, extra } = contextMenu!;
   const obj = objects.find((o) => o.id === targetId);
 
   const handleFocus = () => {
@@ -171,19 +193,19 @@ export default function ContextMenu() {
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-bg-panel border border-border rounded-md shadow-xl py-1.5 min-w-[170px] text-[12px] text-text-primary select-none custom-context-menu"
+      className="fixed z-50 bg-[#181824]/95 backdrop-blur-md border border-neutral-800/80 rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.5)] py-1.5 min-w-[185px] text-[11px] font-medium text-text-primary select-none custom-context-menu animate-in fade-in zoom-in-95 duration-100"
       style={{ top: Math.min(y, window.innerHeight - 250), left: Math.min(x, window.innerWidth - 200) }}
       onContextMenu={(e) => e.preventDefault()}
     >
       {(type === 'viewport' || type === 'hierarchy') && !targetId ? (
         <>
-          <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-text-secondary tracking-wider">Add Part</div>
+          <div className="px-3 py-1 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider">Add Part</div>
           <button
             onClick={() => {
               addPrimitive('box');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Box size={14} className="text-zinc-400" /> Cube
           </button>
@@ -192,7 +214,7 @@ export default function ContextMenu() {
               addPrimitive('sphere');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Circle size={14} className="text-zinc-400" /> Sphere
           </button>
@@ -201,37 +223,136 @@ export default function ContextMenu() {
               addPrimitive('cylinder');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Cylinder size={14} className="text-zinc-400" /> Cylinder
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('pyramid');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Triangle size={14} className="text-zinc-400" /> Pyramid
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('cone');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Triangle size={14} className="text-zinc-400 rotate-180" /> Cone
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('roundedCube');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Box size={14} className="text-zinc-400" /> Rounded Block
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('teardrop');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Droplets size={14} className="text-zinc-400" /> Teardrop / Egg
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('wingBlade');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Wind size={14} className="text-zinc-400" /> Wing Blade / Fin
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('curvedHorn');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Flame size={14} className="text-zinc-400" /> Curved Horn / Claw
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('taperedTorso');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Bone size={14} className="text-zinc-400" /> Tapered Torso
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('forearm');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Bone size={14} className="text-zinc-400 rotate-90" /> Forearm / Leg Limb
           </button>
           <button
             onClick={() => {
               addPrimitive('wedge');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Triangle size={14} className="text-zinc-400" /> Wedge
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('doorway');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <DoorOpen size={14} className="text-zinc-400" /> Doorway Cutout
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('frame');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Square size={14} className="text-zinc-400" /> Frame (Vertical)
+          </button>
+          <button
+            onClick={() => {
+              addPrimitive('horizontalFrame');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Square size={14} className="text-zinc-400 rotate-90" /> Frame (Horizontal)
           </button>
           <button
             onClick={() => {
               addPrimitive('light');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Lightbulb size={14} className="text-yellow-500" /> Light
           </button>
 
-          <div className="h-px bg-border my-1.5 mx-2" />
-          <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-text-secondary tracking-wider">Scene</div>
+          <div className="h-px bg-neutral-800/50 my-1 mx-2" />
+          <div className="px-3 py-1 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider">Scene</div>
           <button
             onClick={() => {
               window.dispatchEvent(new CustomEvent('focus_camera'));
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Camera size={14} /> Focus Scene
           </button>
@@ -239,20 +360,20 @@ export default function ContextMenu() {
             onClick={() => {
               setShowConfirmClear(true);
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 text-red-400 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-red-300 flex items-center gap-2 text-red-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Trash size={14} /> Clear Scene
           </button>
         </>
       ) : type === 'workspace' ? (
         <>
-          <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-text-secondary tracking-wider">Workspace</div>
+          <div className="px-3 py-1 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider">Workspace</div>
           <button
             onClick={() => {
               addPrimitive('box');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Box size={14} className="text-sky-400" /> Add Cube
           </button>
@@ -261,7 +382,7 @@ export default function ContextMenu() {
               addPrimitive('sphere');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Circle size={14} className="text-sky-400" /> Add Sphere
           </button>
@@ -270,7 +391,7 @@ export default function ContextMenu() {
               addPrimitive('plane');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Square size={14} className="text-sky-400" /> Add Plane
           </button>
@@ -279,19 +400,28 @@ export default function ContextMenu() {
               addPrimitive('cylinder');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Cylinder size={14} className="text-sky-400" /> Add Cylinder
           </button>
+          <button
+            onClick={() => {
+              addPrimitive('doorway');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <DoorOpen size={14} className="text-sky-400" /> Add Doorway
+          </button>
           
-          <div className="h-px bg-border my-1.5 mx-2" />
+          <div className="h-px bg-neutral-800/50 my-1 mx-2" />
           
           <button
             onClick={() => {
               document.getElementById('asset-upload')?.click();
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Upload size={14} className="text-emerald-400" /> Import Model...
           </button>
@@ -300,29 +430,38 @@ export default function ContextMenu() {
               addPrimitive('group');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Folder size={14} className="text-amber-400" /> Add Folder
           </button>
           <button
             onClick={() => {
-              createScriptForObject();
+              addPrimitive('motor6d');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Bone size={14} className="text-cyan-400" /> Add Motor6D Joint
+          </button>
+          <button
+            onClick={() => {
+              addScript();
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Code2 size={14} className="text-yellow-400" /> Add Script
           </button>
         </>
       ) : type === 'lighting' ? (
         <>
-          <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-text-secondary tracking-wider">Lighting</div>
+          <div className="px-3 py-1 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider">Lighting</div>
           <button
             onClick={() => {
               addPrimitive('light');
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Lightbulb size={14} className="text-yellow-500" /> Add Point Light
           </button>
@@ -339,7 +478,7 @@ export default function ContextMenu() {
               });
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Lightbulb size={14} className="text-yellow-300" /> Add Spot Light
           </button>
@@ -356,14 +495,117 @@ export default function ContextMenu() {
               });
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Lightbulb size={14} className="text-yellow-200" /> Add Environmental Light
           </button>
         </>
+      ) : type === 'animation' ? (
+        <>
+          <div className="px-3 py-1.5 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider truncate max-w-[170px]">
+            Animation: {extra}
+          </div>
+          <button
+            onClick={() => {
+              const newName = prompt('Rename animation to:', extra);
+              if (newName && newName.trim() && targetId) {
+                renameAnimation(targetId, extra, newName.trim());
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Edit2 size={14} className="text-zinc-400" /> Rename Animation
+          </button>
+          <button
+            onClick={() => {
+              if (confirm(`Delete animation "${extra}"? This cannot be undone.`)) {
+                if (targetId) deleteAnimation(targetId, extra);
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-red-300 flex items-center gap-2 text-red-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Trash2 size={14} /> Delete Animation
+          </button>
+        </>
+      ) : type === 'asset' ? (
+        <>
+          <div className="px-3 py-1.5 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider truncate max-w-[170px]">
+            Asset: {extra?.name || 'Unknown'}
+          </div>
+          <button
+            onClick={() => {
+              if (targetId) {
+                useStore.getState().setRenamingAssetId(targetId);
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Edit2 size={14} className="text-zinc-400" /> Rename Asset
+          </button>
+          <button
+            onClick={() => {
+              if (confirm(`Delete asset "${extra?.name || 'Unknown'}"? This cannot be undone.`)) {
+                if (targetId) useAssetStore.getState().deleteAsset(targetId);
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-red-300 flex items-center gap-2 text-red-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Trash2 size={14} /> Delete Asset
+          </button>
+        </>
+      ) : type === 'sceneTab' ? (
+        <>
+          <div className="px-3 py-1 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider">
+            Scene Options
+          </div>
+          <button
+            onClick={() => {
+              if (targetId) {
+                window.dispatchEvent(new CustomEvent('rename_scene_trigger', { detail: { sceneId: targetId } }));
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Edit2 size={14} className="text-zinc-400" /> Rename Scene
+          </button>
+          <button
+            onClick={() => {
+              if (targetId) {
+                duplicateScene(targetId);
+                toast.success('Scene Duplicated', 'Duplicated scene successfully.');
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Copy size={14} className="text-zinc-400" /> Duplicate Scene
+          </button>
+          <button
+            onClick={() => {
+              if (targetId) {
+                const { scenes } = useStore.getState();
+                if (Object.keys(scenes).length > 1) {
+                  deleteScene(targetId);
+                  toast.success('Scene Deleted', 'The scene has been removed.');
+                } else {
+                  toast.error('Cannot Delete', 'You must have at least one scene.');
+                }
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-red-300 flex items-center gap-2 text-red-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Trash2 size={14} /> Delete Scene
+          </button>
+        </>
       ) : (
         <>
-          <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-text-secondary tracking-wider">
+          <div className="px-3 py-1 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider">
             Object Actions
           </div>
           <button
@@ -371,24 +613,46 @@ export default function ContextMenu() {
               if (targetId) createScriptForObject(targetId);
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
-            <Code2 size={14} className="text-yellow-400" /> Add Script
+            <Code2 size={14} className="text-yellow-400" /> Attach Logic Script
+          </button>
+          <button
+            onClick={() => {
+              if (targetId) {
+                window.dispatchEvent(new CustomEvent('export_object_glb', { detail: { id: targetId } }));
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <Download size={14} className="text-sky-400" /> Export GLB with Animations
+          </button>
+          <button
+            onClick={() => {
+              if (targetId) {
+                window.dispatchEvent(new CustomEvent('save_object_to_browser', { detail: { id: targetId } }));
+              }
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+          >
+            <FolderPlus size={14} className="text-emerald-400" /> Save to Content Browser
           </button>
           <button
             onClick={handleFocus}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Camera size={14} /> Focus Camera
           </button>
 
-          <div className="h-px bg-border my-1.5 mx-2" />
+          <div className="h-px bg-neutral-800/50 my-1 mx-2" />
           <button
             onClick={() => {
               if (obj) copyProperties(obj);
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Copy size={14} className="text-zinc-400" /> Copy Properties
           </button>
@@ -398,15 +662,15 @@ export default function ContextMenu() {
               closeContextMenu();
             }}
             disabled={!copiedProperties}
-            className={`w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors ${!copiedProperties ? 'opacity-50 cursor-not-allowed' : ''}`}
+            className={`w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] ${!copiedProperties ? 'opacity-35 cursor-not-allowed hover:bg-transparent hover:text-text-primary' : 'cursor-pointer'}`}
           >
             <Copy size={14} className="text-zinc-400" /> Paste Properties
           </button>
 
           {obj && obj.scripts && obj.scripts.length > 0 && (
             <>
-              <div className="h-px bg-border my-1.5 mx-2" />
-              <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-text-secondary tracking-wider">Scripts</div>
+              <div className="h-px bg-neutral-800/50 my-1 mx-2" />
+              <div className="px-3 py-1 text-[9px] uppercase font-bold text-text-secondary/60 tracking-wider">Scripts</div>
               {obj.scripts.map((scriptId) => {
                 const script = useAssetStore.getState().assets.find((a) => a.id === scriptId);
                 return (
@@ -416,7 +680,7 @@ export default function ContextMenu() {
                       openScript(scriptId);
                       closeContextMenu();
                     }}
-                    className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+                    className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
                   >
                     <Code2 size={14} className="text-yellow-400" /> {script?.name || 'Unknown Script'}
                   </button>
@@ -429,7 +693,7 @@ export default function ContextMenu() {
             <>
               <button
                 onClick={togglePhysics}
-                className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+                className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
               >
                 <Magnet
                   size={14}
@@ -441,7 +705,7 @@ export default function ContextMenu() {
               {obj.material && (
                 <button
                   onClick={() => applyMaterial('chrome')}
-                  className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 transition-colors"
+                  className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
                 >
                   <Paintbrush size={14} className="text-zinc-400" /> Make Metallic
                 </button>
@@ -449,13 +713,13 @@ export default function ContextMenu() {
             </>
           )}
 
-          <div className="h-px bg-border my-1.5 mx-2" />
+          <div className="h-px bg-neutral-800/50 my-1 mx-2" />
           <button
             onClick={() => {
               setRenamingId(targetId);
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 text-text-primary transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-text-primary transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Edit2 size={14} /> Rename (F2)
           </button>
@@ -464,25 +728,144 @@ export default function ContextMenu() {
               if (targetId) duplicateObject(targetId);
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 text-blue-400 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-blue-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Copy size={14} /> Duplicate (Ctrl+D)
           </button>
           <button
             onClick={() => {
+              if (targetId) duplicateAndMirrorObject(targetId, 'x');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-cyan-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+            title="Duplicate and mirror model along X-axis (left ↔ right symmetry)"
+          >
+            <FlipHorizontal size={14} /> Duplicate & Mirror (X-Axis)
+          </button>
+          <button
+            onClick={() => {
+              if (targetId) duplicateAndMirrorObject(targetId, 'z');
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-cyan-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+            title="Duplicate and mirror model along Z-axis (front ↔ back symmetry)"
+          >
+            <FlipVertical size={14} /> Duplicate & Mirror (Z-Axis)
+          </button>
+          {obj && (
+            <button
+              onClick={() => {
+                copyObject(obj);
+                closeContextMenu();
+              }}
+              className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-text-primary transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+            >
+              <Copy size={14} className="text-zinc-400" /> Copy (Ctrl+C)
+            </button>
+          )}
+          {copiedObject && (
+            <button
+              onClick={() => {
+                if (targetId) pasteObject(targetId);
+                closeContextMenu();
+              }}
+              className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-text-primary transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+            >
+              <Copy size={14} className="text-zinc-400" /> Paste (Ctrl+V)
+            </button>
+          )}
+          <button
+            onClick={() => {
               groupSelected();
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 text-amber-400 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-amber-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Folder size={14} /> Group (Ctrl+G)
           </button>
+          {obj && obj.type === 'csg' && (
+            <button
+              onClick={() => {
+                ungroupSelected();
+                closeContextMenu();
+              }}
+              className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-rose-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+            >
+              <Merge size={14} className="rotate-180" /> Separate (Deunionize)
+            </button>
+          )}
+          {obj && obj.type === 'group' && (
+            <button
+              onClick={() => {
+                ungroupSelected();
+                closeContextMenu();
+              }}
+              className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-rose-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+            >
+              <Folder size={14} className="opacity-75" /> Ungroup
+            </button>
+          )}
+          {selectedIds.length > 1 && (
+            <>
+              <button
+                onClick={() => {
+                  const selectedObjects = selectedIds
+                    .map((id) => objects.find((o) => o.id === id))
+                    .filter(Boolean) as SceneObject[];
+                  const hasNonPrimitives = selectedObjects.some((o) => o.type !== 'mesh');
+                  if (hasNonPrimitives) {
+                    toast.error("CSG operations (Union, Subtract, Intersect) can only be performed on primitive shapes (Cubes, Spheres, Cylinders, Wedges, Doorways). For models, please use Group (Ctrl+G).");
+                  } else {
+                    csgOperation('addition');
+                  }
+                  closeContextMenu();
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-indigo-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+              >
+                <Merge size={14} /> Union (CSG Add)
+              </button>
+              <button
+                onClick={() => {
+                  const selectedObjects = selectedIds
+                    .map((id) => objects.find((o) => o.id === id))
+                    .filter(Boolean) as SceneObject[];
+                  const hasNonPrimitives = selectedObjects.some((o) => o.type !== 'mesh');
+                  if (hasNonPrimitives) {
+                    toast.error("CSG operations (Union, Subtract, Intersect) can only be performed on primitive shapes (Cubes, Spheres, Cylinders, Wedges, Doorways). For models, please use Group (Ctrl+G).");
+                  } else {
+                    csgOperation('subtraction');
+                  }
+                  closeContextMenu();
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-indigo-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+              >
+                <Merge size={14} className="rotate-180" /> Subtract (CSG Cut)
+              </button>
+              <button
+                onClick={() => {
+                  const selectedObjects = selectedIds
+                    .map((id) => objects.find((o) => o.id === id))
+                    .filter(Boolean) as SceneObject[];
+                  const hasNonPrimitives = selectedObjects.some((o) => o.type !== 'mesh');
+                  if (hasNonPrimitives) {
+                    toast.error("CSG operations (Union, Subtract, Intersect) can only be performed on primitive shapes (Cubes, Spheres, Cylinders, Wedges, Doorways). For models, please use Group (Ctrl+G).");
+                  } else {
+                    csgOperation('intersection');
+                  }
+                  closeContextMenu();
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-white flex items-center gap-2 text-indigo-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
+              >
+                <Merge size={14} className="rotate-90" /> Intersect (CSG)
+              </button>
+            </>
+          )}
           <button
             onClick={() => {
               if (targetId) deleteObject(targetId);
               closeContextMenu();
             }}
-            className="w-full text-left px-3 py-1.5 hover:bg-bg-deep flex items-center gap-2 text-red-400 transition-colors"
+            className="w-full text-left px-3 py-1.5 hover:bg-white/5 hover:text-red-300 flex items-center gap-2 text-red-400 transition-colors font-medium rounded-md mx-1 w-[calc(100%-8px)] cursor-pointer"
           >
             <Trash2 size={14} /> Delete (Del)
           </button>

@@ -10,6 +10,9 @@ export default defineConfig(({mode}) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        'react': path.resolve(__dirname, 'node_modules/react'),
+        'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
+        'three': path.resolve(__dirname, 'node_modules/three'),
       },
     },
     server: {

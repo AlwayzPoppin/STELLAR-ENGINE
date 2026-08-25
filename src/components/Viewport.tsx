@@ -14,20 +14,139 @@ import {
   Sky,
   Stars,
   Stats,
+  useTexture,
 } from '@react-three/drei';
 import { Physics, RigidBody, CuboidCollider, BallCollider, useRapier } from '@react-three/rapier';
 import { Geometry, Base, Addition, Subtraction, Intersection } from '@react-three/csg';
 import { EffectComposer, Bloom, ToneMapping, Vignette, Outline, Selection, Select, GodRays } from '@react-three/postprocessing';
-import { useStore, SceneObject, FoliageInstanceData } from '../store/useStore';
+import { useStore, SceneObject, FoliageInstanceData, BoneNode } from '../store/useStore';
 import { useAssetStore } from '../store/useAssetStore';
 import * as THREE from 'three';
-import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { toast } from '../store/useToastStore';
+import { exportSceneWithPipeline } from '../utils/GLTFExportPipeline';
 import { Layers, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Play, Pause } from 'lucide-react';
 import { BlendFunction, KernelSize } from 'postprocessing';
+import { useManagedTexture, TextureManager, PRESET_TEXTURE_URLS } from '../utils/TextureManager';
+import {
+  PROCEDURAL_FOLIAGE_PRESETS,
+  getProceduralFoliageParts,
+  computeFoliageInstanceColor,
+  applyWindSwayShader,
+  ProceduralFoliagePart,
+} from '../utils/FoliageGeometryLibrary';
+import {
+  clusterFoliageInstances,
+  writeInstanceTransforms,
+  computeInstancedCapacity,
+} from '../utils/FoliageClusterManager';
+import { AssetStagingManager, StagingProgressEvent } from '../utils/AssetStagingManager';
+import { SpatialAudioManager } from '../utils/SpatialAudioManager';
+import { MarqueeSelectionController } from './MarqueeSelectionController';
 
 
+
+class ModelErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback?: React.ReactNode; assetName?: string },
+  { hasError: boolean; errorMessage?: string }
+> {
+  constructor(props: { children: React.ReactNode; fallback?: React.ReactNode; assetName?: string }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, errorMessage: error?.message || 'Failed to load 3D model asset' };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.warn('ModelErrorBoundary caught model loading error:', error, errorInfo);
+    const assetTitle = this.props.assetName ? ` "${this.props.assetName}"` : '';
+    toast.error(
+      'Model Load Error',
+      `Failed to load 3D model${assetTitle}. The asset file may be corrupted, missing texture references, or in an unsupported format.`
+    );
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        this.props.fallback || (
+          <mesh>
+            <boxGeometry args={[1, 1, 1]} />
+            <meshBasicMaterial color="#ef4444" wireframe />
+          </mesh>
+        )
+      );
+    }
+    return this.props.children;
+  }
+}
 
 let playerRigidBodyRef: any = null;
+
+export function extractSkeletonFromScene(scene: THREE.Object3D): BoneNode[] {
+  if (!scene) return [];
+
+  const boneMap = new Map<string, THREE.Object3D>();
+  const skinnedMeshBones = new Set<THREE.Object3D>();
+
+  scene.traverse((child: any) => {
+    if (child.isSkinnedMesh && child.skeleton && Array.isArray(child.skeleton.bones)) {
+      child.skeleton.bones.forEach((b: THREE.Object3D) => {
+        if (b) skinnedMeshBones.add(b);
+      });
+    }
+    if (child.isBone || child instanceof THREE.Bone || child.type === 'Bone') {
+      boneMap.set(child.name || child.uuid, child);
+    }
+  });
+
+  skinnedMeshBones.forEach((b) => {
+    boneMap.set(b.name || b.uuid, b);
+  });
+
+  if (boneMap.size === 0) return [];
+
+  const rootBones: THREE.Object3D[] = [];
+  boneMap.forEach((bone) => {
+    let parent = bone.parent;
+    let isRoot = true;
+    while (parent) {
+      if (boneMap.has(parent.name || parent.uuid) || (parent as any).isBone) {
+        isRoot = false;
+        break;
+      }
+      parent = parent.parent;
+    }
+    if (isRoot) {
+      rootBones.push(bone);
+    }
+  });
+
+  const buildBoneNode = (bone: THREE.Object3D): BoneNode => {
+    const childrenNodes: BoneNode[] = [];
+    const processChildren = (parentObj: THREE.Object3D) => {
+      if (!parentObj.children) return;
+      parentObj.children.forEach((c) => {
+        if (boneMap.has(c.name || c.uuid) || (c as any).isBone) {
+          childrenNodes.push(buildBoneNode(c));
+        } else {
+          processChildren(c);
+        }
+      });
+    };
+
+    processChildren(bone);
+
+    return {
+      id: bone.name || bone.uuid,
+      name: bone.name || 'Unnamed Bone',
+      children: childrenNodes,
+    };
+  };
+
+  return rootBones.map(buildBoneNode);
+}
 
 // Convert color temperature in Kelvin to approximate RGB
 function kelvinToColor(kelvin: number): THREE.Color {
@@ -53,6 +172,18 @@ function kelvinToColor(kelvin: number): THREE.Color {
   return new THREE.Color(r / 255, g / 255, b / 255);
 }
 
+// Pre-allocated sky color constants (module-scoped to avoid per-frame GC pressure)
+const _skyMidnightTop = new THREE.Color('#0b1d3a');
+const _skyMidnightBottom = new THREE.Color('#162a45');
+const _skyDawnTop = new THREE.Color('#3a4878');
+const _skyDawnBottom = new THREE.Color('#e07a5f');
+const _skyNoonTop = new THREE.Color('#1a82e2');
+const _skyNoonBottom = new THREE.Color('#a1caff');
+const _skyDuskTop = new THREE.Color('#2c3e50');
+const _skyDuskBottom = new THREE.Color('#e65c00');
+const _skyResultTop = new THREE.Color();
+const _skyResultBottom = new THREE.Color();
+
 function DayNightCycle() {
   const isPlaying = useStore((state) => state.isPlaying);
   const environment = useStore((state) => state.environment);
@@ -60,12 +191,8 @@ function DayNightCycle() {
   const { scene } = useThree();
   const sunLightRef = useRef<any>(null);
   const moonLightRef = useRef<any>(null);
-  const [sunPos, setSunPos] = useState<[number, number, number]>([200, 400, 200]);
-  const [skyParams, setSkyParams] = useState({ turbidity: 10, rayleigh: 3 });
-  const [ambientInt, setAmbientInt] = useState(0.2);
-  const [sunInt, setSunInt] = useState(1.5);
-  const [moonInt, setMoonInt] = useState(0.3);
-  const [currentHourState, setCurrentHourState] = useState(environment.timeOfDay);
+  const ambientLightRef = useRef<any>(null);
+  const starsGroupRef = useRef<any>(null);
 
   // Read celestial properties from the store
   const sunObjStore = objects.find((o) => o.id === 'obj_sun');
@@ -87,12 +214,18 @@ function DayNightCycle() {
   const prevIsPaused = useRef(isPaused);
   const pauseStartTime = useRef(0);
 
+  const skyUniforms = useMemo(() => {
+    return {
+      colorTop: { value: new THREE.Color('#1a82e2') },
+      colorBottom: { value: new THREE.Color('#a1caff') },
+    };
+  }, []);
+
   useFrame((state) => {
     let currentHour = environment.timeOfDay;
 
     if (isPlaying) {
       if (!prevIsPlaying.current) {
-        // Just started playing! Record start time
         startClockTime.current = state.clock.getElapsedTime();
         startTimeRef.current = environment.timeOfDay;
         pauseStartTime.current = 0;
@@ -114,19 +247,17 @@ function DayNightCycle() {
     prevIsPlaying.current = isPlaying;
     prevIsPaused.current = isPaused;
 
-    // Update sky colors
-    const { top, bottom } = getSkyColors(currentHour);
+    // Update sky colors using pre-allocated result colors
+    getSkyColors(currentHour);
     const skyObj = scene.getObjectByName('SkyDome');
     if (skyObj) {
       const mat = (skyObj as any).material as THREE.ShaderMaterial;
-      if (mat.uniforms) {
-        mat.uniforms.colorTop.value = top;
-        mat.uniforms.colorBottom.value = bottom;
+      if (mat && mat.uniforms) {
+        mat.uniforms.colorTop.value.copy(_skyResultTop);
+        mat.uniforms.colorBottom.value.copy(_skyResultBottom);
       }
     }
 
-    // Convert 24h time to radians. 12:00 (noon) should be top (PI/2), 0:00 (midnight) bottom (-PI/2)
-    // So angle = (time / 24) * 2PI - PI/2
     const timeAngle = (currentHour / 24) * Math.PI * 2 - Math.PI / 2;
     const radius = 400;
 
@@ -134,10 +265,10 @@ function DayNightCycle() {
     const y = Math.sin(timeAngle) * radius;
     const z = 200;
 
-    const sunHeight = y / radius; // -1 to 1
+    const sunHeight = y / radius;
     const isDay = sunHeight > 0;
 
-    // Update meshes directly
+    // Update physical mesh representations directly
     const sunMesh = scene.getObjectByName('Physical Sun');
     const moonMesh = scene.getObjectByName('Physical Moon');
 
@@ -152,7 +283,7 @@ function DayNightCycle() {
       moonMesh.scale.set(s, s, s);
     }
 
-    // Calculate intensities using celestial volumetricIntensity & atmosphericContribution
+    // Calculate light intensities
     const baseAmbientDay = 0.05 + sunHeight * 0.45;
     const newAmbientInt = isDay
       ? baseAmbientDay * sunCelestial.atmosphericContribution
@@ -160,94 +291,65 @@ function DayNightCycle() {
     const newSunInt = isDay ? sunHeight * 1.5 * sunCelestial.volumetricIntensity : 0;
     const newMoonInt = !isDay ? Math.abs(sunHeight) * 0.4 * moonCelestial.volumetricIntensity : 0;
 
-    // Sky parameters for transitions
-    let newTurbidity = 10;
-    let newRayleigh = 3;
+    const isNimbus = environment.cloudsEnabled && environment.cloudsType === 'nimbus';
+    const isSnowOrBlizzard = environment.cloudsEnabled && (environment.cloudsType === 'blizzard');
+    const finalAmbient = isNimbus ? newAmbientInt * 0.6 : (isSnowOrBlizzard ? newAmbientInt * 0.85 : newAmbientInt);
 
-    if (isDay && sunHeight < 0.3) {
-      // Sunset/Dusk or Sunrise/Morning
-      newTurbidity = 20;
-      newRayleigh = 10; // Dramatic red/orange scatter
-    } else if (!isDay) {
-      // Night or Deep Night
-      newTurbidity = 2;
-      newRayleigh = 0.5; // Very clear, dark sky
+    // Direct Three.js light updates via refs (zero React re-renders!)
+    if (ambientLightRef.current) {
+      ambientLightRef.current.intensity = finalAmbient;
+    }
+    if (sunLightRef.current) {
+      sunLightRef.current.position.set(x, y, z);
+      sunLightRef.current.intensity = newSunInt;
+      sunLightRef.current.color.copy(sunColor);
+    }
+    if (moonLightRef.current) {
+      moonLightRef.current.position.set(-x, -y, -z);
+      moonLightRef.current.intensity = newMoonInt;
+      moonLightRef.current.color.copy(moonColor);
     }
 
-    const isNimbus = environment.cloudsEnabled && environment.cloudsType === 'nimbus';
-    const isSnowOrBlizzard = environment.cloudsEnabled && (environment.cloudsType === 'snow' || environment.cloudsType === 'blizzard');
-    setAmbientInt(isNimbus ? newAmbientInt * 0.6 : (isSnowOrBlizzard ? newAmbientInt * 0.85 : newAmbientInt));
-    setSunInt(newSunInt);
-    setMoonInt(newMoonInt);
-    setSkyParams({ turbidity: newTurbidity, rayleigh: newRayleigh });
-    setSunPos([x, y, z]);
+    if (starsGroupRef.current) {
+      starsGroupRef.current.visible = (currentHour < 5 || currentHour > 19);
+    }
 
-    // Track state for React-rendered components like Stars
-    setCurrentHourState(currentHour);
-
-    // Scale down IBL (environment map reflections) at night so objects aren't over-lit
     const envIntensity = isDay ? Math.max(0.3, sunHeight) : 0.05;
     scene.environmentIntensity = envIntensity;
   });
-  // Calculate sky colors based on time
+
+  // Calculate sky colors using pre-allocated module-scope constants (zero allocations)
   const getSkyColors = (hour: number) => {
-    const midnightTop = new THREE.Color('#0b1d3a');
-    const midnightBottom = new THREE.Color('#162a45');
-
-    const dawnTop = new THREE.Color('#3a4878');
-    const dawnBottom = new THREE.Color('#e07a5f'); // Orange
-
-    const noonTop = new THREE.Color('#1a82e2'); // Bright Blue
-    const noonBottom = new THREE.Color('#a1caff'); // Light Blue
-
-    const duskTop = new THREE.Color('#2c3e50');
-    const duskBottom = new THREE.Color('#e65c00'); // Deep Orange
-
-    let top = new THREE.Color();
-    let bottom = new THREE.Color();
-
     if (hour < 4) {
-      // 0:00 - 4:00: Deep Night
-      top.copy(midnightTop);
-      bottom.copy(midnightBottom);
+      _skyResultTop.copy(_skyMidnightTop);
+      _skyResultBottom.copy(_skyMidnightBottom);
     } else if (hour < 6) {
-      // 4:00 - 6:00: Dawn Transition
       const t = (hour - 4) / 2;
-      top.lerpColors(midnightTop, dawnTop, t);
-      bottom.lerpColors(midnightBottom, dawnBottom, t);
+      _skyResultTop.lerpColors(_skyMidnightTop, _skyDawnTop, t);
+      _skyResultBottom.lerpColors(_skyMidnightBottom, _skyDawnBottom, t);
     } else if (hour < 12) {
-      // 6:00 - 12:00: Dawn to Noon
       const t = (hour - 6) / 6;
-      top.lerpColors(dawnTop, noonTop, t);
-      bottom.lerpColors(dawnBottom, noonBottom, t);
+      _skyResultTop.lerpColors(_skyDawnTop, _skyNoonTop, t);
+      _skyResultBottom.lerpColors(_skyDawnBottom, _skyNoonBottom, t);
     } else if (hour < 16) {
-      // 12:00 - 16:00: Pure Noon
-      top.copy(noonTop);
-      bottom.copy(noonBottom);
+      _skyResultTop.copy(_skyNoonTop);
+      _skyResultBottom.copy(_skyNoonBottom);
     } else if (hour < 18) {
-      // 16:00 - 18:00: Dusk Transition
       const t = (hour - 16) / 2;
-      top.lerpColors(noonTop, duskTop, t);
-      bottom.lerpColors(noonBottom, duskBottom, t);
+      _skyResultTop.lerpColors(_skyNoonTop, _skyDuskTop, t);
+      _skyResultBottom.lerpColors(_skyNoonBottom, _skyDuskBottom, t);
     } else if (hour < 20) {
-      // 18:00 - 20:00: Dusk to Midnight
       const t = (hour - 18) / 2;
-      top.lerpColors(duskTop, midnightTop, t);
-      bottom.lerpColors(duskBottom, midnightBottom, t);
+      _skyResultTop.lerpColors(_skyDuskTop, _skyMidnightTop, t);
+      _skyResultBottom.lerpColors(_skyDuskBottom, _skyMidnightBottom, t);
     } else {
-      // 20:00 - 24:00: Deep Night
-      top.copy(midnightTop);
-      bottom.copy(midnightBottom);
+      _skyResultTop.copy(_skyMidnightTop);
+      _skyResultBottom.copy(_skyMidnightBottom);
     }
-
-    return { top, bottom };
   };
-
-  const { top, bottom } = useMemo(() => getSkyColors(currentHourState), [currentHourState]);
 
   return (
     <>
-      {/* Custom Gradient Sky Dome inside Environment for reflections */}
       <Environment background frames={Infinity}>
         <mesh name="SkyDome" scale={[100, 100, 100]}>
           <sphereGeometry args={[1, 32, 32]} />
@@ -272,25 +374,21 @@ function DayNightCycle() {
                 gl_FragColor = vec4(mix(colorBottom, colorTop, h), 1.0);
               }
             `}
-            uniforms={{
-              colorTop: { value: top },
-              colorBottom: { value: bottom },
-            }}
+            uniforms={skyUniforms}
           />
         </mesh>
       </Environment>
 
-      {/* Stars visible only at night (7 PM to 5 AM) */}
-      {(currentHourState < 5 || currentHourState > 19) && (
+      <group ref={starsGroupRef}>
         <Stars radius={300} depth={50} count={3000} factor={4} saturation={0} fade speed={1} />
-      )}
+      </group>
 
-      <ambientLight intensity={ambientInt} />
+      <ambientLight ref={ambientLightRef} intensity={0.2} />
 
       <directionalLight
         ref={sunLightRef}
-        position={sunPos}
-        intensity={sunInt}
+        position={[200, 400, 200]}
+        intensity={1.5}
         color={sunColor}
         castShadow
         shadow-mapSize={[2048, 2048]}
@@ -298,14 +396,14 @@ function DayNightCycle() {
 
       <directionalLight
         ref={moonLightRef}
-        position={[-sunPos[0], -sunPos[1], -sunPos[2]]}
-        intensity={moonInt}
+        position={[-200, -400, -200]}
+        intensity={0.3}
         color={moonColor}
         castShadow
         shadow-mapSize={[1024, 1024]}
       />
 
-      <PhysicalClouds currentHour={currentHourState} />
+      <PhysicalClouds currentHour={environment.timeOfDay} />
       <RainParticles />
       <SnowParticles />
     </>
@@ -315,10 +413,8 @@ function DayNightCycle() {
 // GodRays wrapper — creates a memory-only mesh to avoid scene graph & focus issues
 function SunGodRays() {
   const environment = useStore((s) => s.environment);
-  const sunCelestial = useStore((s) => {
-    const sunObj = s.objects.find((o) => o.id === 'obj_sun');
-    return (sunObj?.celestialProps ?? { volumetricIntensity: 1.0 }) as any;
-  });
+  const sunObj = useStore((s) => s.objects.find((o) => o.id === 'obj_sun'));
+  const sunCelestial = (sunObj?.celestialProps ?? { volumetricIntensity: 1.0 }) as any;
 
   // Create a mesh purely in memory. It is NOT rendered in the scene graph,
   // so it cannot steal focus or intercept pointer events!
@@ -337,9 +433,9 @@ function SunGodRays() {
   // Track the actual Physical Sun's position every frame (works in both edit & play mode)
   const { scene } = useThree();
   useFrame(() => {
-    const sunObj = scene.getObjectByName('Physical Sun');
-    if (sunObj) {
-      ghostSunMesh.position.copy(sunObj.position);
+    const sunNode = scene.getObjectByName('Physical Sun');
+    if (sunNode) {
+      ghostSunMesh.position.copy(sunNode.position);
       ghostSunMesh.updateMatrixWorld();
     }
   });
@@ -366,14 +462,37 @@ function SunGodRays() {
   );
 }
 
-function GltfModel({ url, isPlayer }: { url: string; isPlayer?: boolean }) {
+function GltfModel({ url, isPlayer, objId }: { url: string; isPlayer?: boolean; objId?: string }) {
   const { scene, animations: selfAnimations } = useGLTF(url);
   const clonedScene = useMemo(() => {
     const clone = scene.clone();
 
     // Always enable shadows for meshes (except the sun)
     clone.traverse((child: any) => {
+      if (objId) {
+        child.userData = { ...child.userData, id: objId };
+      }
       if (child.isMesh) {
+        // Override expensive per-triangle raycasting with fast bounding sphere check
+        child.raycast = function (raycaster: THREE.Raycaster, intersects: any[]) {
+          if (!this.geometry) return;
+          if (!this.geometry.boundingSphere) {
+            this.geometry.computeBoundingSphere();
+          }
+          if (!this.geometry.boundingSphere) return;
+
+          const sphere = this.geometry.boundingSphere.clone();
+          sphere.applyMatrix4(this.matrixWorld);
+
+          if (raycaster.ray.intersectsSphere(sphere)) {
+            intersects.push({
+              distance: raycaster.ray.origin.distanceTo(sphere.center),
+              point: sphere.center.clone(),
+              object: this,
+            });
+          }
+        };
+
         if (url.includes('_shining_sun')) {
           child.material = new THREE.MeshStandardMaterial({
             color: '#ffaa00',
@@ -407,6 +526,22 @@ function GltfModel({ url, isPlayer }: { url: string; isPlayer?: boolean }) {
 
     return clone;
   }, [scene, url]);
+
+  const workspaceMode = useStore((state) => state.workspaceMode);
+  const animationTargetId = useStore((state) => state.animationTargetId);
+
+  useEffect(() => {
+    if (!clonedScene) return;
+    const isTarget = (objId && animationTargetId === objId) || (!animationTargetId && workspaceMode === 'animation');
+    if (isTarget || workspaceMode === 'animation') {
+      useStore.getState().setActiveClonedScene(clonedScene);
+      const skeleton = extractSkeletonFromScene(clonedScene);
+      useStore.getState().setActiveSkeleton(skeleton);
+      if (objId && !animationTargetId) {
+        useStore.getState().setAnimationTargetId(objId);
+      }
+    }
+  }, [clonedScene, objId, animationTargetId, workspaceMode]);
 
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionsRef = useRef<Record<string, THREE.AnimationAction>>({});
@@ -532,18 +667,20 @@ function GltfModel({ url, isPlayer }: { url: string; isPlayer?: boolean }) {
   return <primitive object={clonedScene} />;
 }
 
-function FbxModel({ url }: { url: string }) {
+function FbxModel({ url, objId }: { url: string; objId?: string }) {
   const fbx = useFBX(url);
   const clonedScene = useMemo(() => {
     const clone = fbx.clone();
     clone.traverse((child: any) => {
+      if (objId) {
+        child.userData = { ...child.userData, id: objId };
+      }
       if (child.isMesh) {
-        child.castShadow = true;
         child.receiveShadow = true;
       }
     });
     return clone;
-  }, [fbx]);
+  }, [fbx, objId]);
 
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const isPlaying = useStore((state) => state.isPlaying);
@@ -571,29 +708,11 @@ function FbxModel({ url }: { url: string }) {
   return <primitive object={clonedScene} />;
 }
 
-const TEXTURE_URLS: Record<string, string> = {
-  grid: 'https://raw.githubusercontent.com/pmndrs/drei-assets/master/prototype/Grid_Material.png',
-  brick: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/brick_diffuse.jpg',
-  wood: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/hardwood2_diffuse.jpg',
-  metal:
-    'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/floors/FloorsCheckerboard_S_Diffuse.jpg',
-  water: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/waternormals.jpg',
-};
-
 function CustomMaterial({ material }: { material: SceneObject['material'] }) {
   const wireframeMode = useStore((state) => state.wireframeMode);
-  const [texture, setTexture] = useState<THREE.Texture | null>(null);
-  const [normalTexture, setNormalTexture] = useState<THREE.Texture | null>(null);
 
   const rx = material?.repeatX ?? 2;
   const ry = material?.repeatY ?? 2;
-
-  const textureRef = useRef<THREE.Texture | null>(null);
-  const normalTextureRef = useRef<THREE.Texture | null>(null);
-
-  const uTimeRef = useRef<{ value: number } | null>(null);
-  const uWaveHeightRef = useRef<{ value: number } | null>(null);
-  const uWaveSpeedRef = useRef<{ value: number } | null>(null);
 
   const waveHeight = material?.waveHeight ?? 0.08;
   const waveSpeed = material?.waveSpeed ?? 1.0;
@@ -603,6 +722,28 @@ function CustomMaterial({ material }: { material: SceneObject['material'] }) {
     material?.normalMap === 'water' ||
     (material?.map && material.map.includes('waternormals.jpg')) ||
     (material?.normalMap && material.normalMap.includes('waternormals.jpg'));
+
+  // Centralized texture acquisition and instance caching
+  const texture = useManagedTexture(material?.map, {
+    isNormalMap: false,
+    repeatX: rx,
+    repeatY: ry,
+    isWater: !!isWater,
+  });
+
+  const normalTexture = useManagedTexture(material?.normalMap, {
+    isNormalMap: true,
+    repeatX: rx,
+    repeatY: ry,
+    isWater: !!isWater,
+  });
+
+  const textureRef = useRef<THREE.Texture | null>(null);
+  const normalTextureRef = useRef<THREE.Texture | null>(null);
+
+  const uTimeRef = useRef<{ value: number } | null>(null);
+  const uWaveHeightRef = useRef<{ value: number } | null>(null);
+  const uWaveSpeedRef = useRef<{ value: number } | null>(null);
 
   useEffect(() => {
     textureRef.current = texture;
@@ -641,121 +782,100 @@ function CustomMaterial({ material }: { material: SceneObject['material'] }) {
     }
   });
 
-  useEffect(() => {
-    if (material?.map) {
-      const url = TEXTURE_URLS[material.map] || material.map;
-      new THREE.TextureLoader().load(url, (tex) => {
-        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-        tex.repeat.set(rx, ry);
-        setTexture(tex);
-      }, undefined, (err) => {
-        console.error('Failed to load custom color map texture:', err);
-      });
-    } else {
-      setTexture(null);
-    }
-  }, [material?.map]);
+  const customProgramCacheKey = React.useCallback(() => {
+    return isWater ? 'water_material_custom_shader' : 'standard_material';
+  }, [isWater]);
 
-  useEffect(() => {
-    if (material?.normalMap) {
-      const url = TEXTURE_URLS[material.normalMap] || material.normalMap;
-      new THREE.TextureLoader().load(url, (tex) => {
-        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-        tex.repeat.set(rx, ry);
-        setNormalTexture(tex);
-      }, undefined, (err) => {
-        console.error('Failed to load custom normal map texture:', err);
-      });
-    } else {
-      setNormalTexture(null);
-    }
-  }, [material?.normalMap]);
+  const handleBeforeCompile = React.useCallback((shader: any) => {
+    if (isWater) {
+      shader.uniforms.uTime = { value: 0 };
+      shader.uniforms.uWaveHeight = { value: 0.08 };
+      shader.uniforms.uWaveSpeed = { value: 1.0 };
+      uTimeRef.current = shader.uniforms.uTime;
+      uWaveHeightRef.current = shader.uniforms.uWaveHeight;
+      uWaveSpeedRef.current = shader.uniforms.uWaveSpeed;
 
-  useEffect(() => {
-    if (texture) {
-      texture.repeat.set(rx, ry);
-      texture.needsUpdate = true;
-    }
-  }, [texture, rx, ry]);
+      shader.vertexShader = `
+        uniform float uTime;
+        uniform float uWaveHeight;
+        uniform float uWaveSpeed;
+        varying float vWaveHeight;
+      ` + shader.vertexShader;
 
-  useEffect(() => {
-    if (normalTexture) {
-      normalTexture.repeat.set(rx, ry);
-      normalTexture.needsUpdate = true;
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+          #include <begin_vertex>
+          float wave = sin(position.x * 4.0 + uTime * 2.0 * uWaveSpeed) * uWaveHeight + 
+                       cos(position.z * 4.0 + uTime * 1.5 * uWaveSpeed) * uWaveHeight;
+          transformed.y += wave;
+          vWaveHeight = wave;
+        `
+      );
+
+      shader.fragmentShader = `
+        uniform float uWaveHeight;
+        varying float vWaveHeight;
+      ` + shader.fragmentShader;
+
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <map_fragment>',
+        `
+          #include <map_fragment>
+          
+          vec3 baseColor = diffuseColor.rgb;
+          vec3 deepColor = baseColor * 0.15;
+          vec3 crestColor = clamp(baseColor * 1.4 + vec3(0.0, 0.15, 0.2), 0.0, 1.0);
+          
+          float heightFactor = (vWaveHeight / max(0.01, uWaveHeight)) * 0.5 + 0.5;
+          heightFactor = clamp(heightFactor, 0.0, 1.0);
+          
+          vec3 waterColor = mix(deepColor, crestColor, heightFactor);
+          
+          float foamThreshold = 0.85;
+          if (heightFactor > foamThreshold) {
+            float foamIntensity = (heightFactor - foamThreshold) / (1.0 - foamThreshold);
+            waterColor = mix(waterColor, vec3(1.0, 1.0, 1.0), foamIntensity * 0.45);
+          }
+          
+          diffuseColor.rgb = waterColor;
+        `
+      );
     }
-  }, [normalTexture, rx, ry]);
+  }, [isWater]);
 
   if (!material) return null;
 
+  if (isWater) {
+    return (
+      <meshStandardMaterial
+        key="water"
+        color={material.color}
+        roughness={0.05}
+        metalness={0.1}
+        envMapIntensity={material.envMapIntensity}
+        map={texture}
+        normalMap={normalTexture}
+        wireframe={wireframeMode}
+        transparent={true}
+        opacity={material.opacity !== undefined ? material.opacity : 0.65}
+        customProgramCacheKey={customProgramCacheKey}
+        onBeforeCompile={handleBeforeCompile}
+      />
+    );
+  }
+
   return (
     <meshStandardMaterial
-      key={isWater ? 'water' : 'normal'}
       color={material.color}
-      roughness={isWater ? 0.05 : material.roughness}
-      metalness={isWater ? 0.1 : material.metalness}
+      roughness={material.roughness}
+      metalness={material.metalness}
       envMapIntensity={material.envMapIntensity}
       map={texture}
       normalMap={normalTexture}
       wireframe={wireframeMode}
-      transparent={isWater || (material.opacity !== undefined && material.opacity < 1.0)}
-      opacity={material.opacity !== undefined ? material.opacity : (isWater ? 0.65 : 1.0)}
-      onBeforeCompile={(shader) => {
-        if (isWater) {
-          shader.uniforms.uTime = { value: 0 };
-          shader.uniforms.uWaveHeight = { value: waveHeight };
-          shader.uniforms.uWaveSpeed = { value: waveSpeed };
-          uTimeRef.current = shader.uniforms.uTime;
-          uWaveHeightRef.current = shader.uniforms.uWaveHeight;
-          uWaveSpeedRef.current = shader.uniforms.uWaveSpeed;
-
-          shader.vertexShader = `
-            uniform float uTime;
-            uniform float uWaveHeight;
-            uniform float uWaveSpeed;
-            varying float vWaveHeight;
-          ` + shader.vertexShader;
-
-          shader.vertexShader = shader.vertexShader.replace(
-            '#include <begin_vertex>',
-            `
-              #include <begin_vertex>
-              float wave = sin(position.x * 4.0 + uTime * 2.0 * uWaveSpeed) * uWaveHeight + 
-                           cos(position.z * 4.0 + uTime * 1.5 * uWaveSpeed) * uWaveHeight;
-              transformed.y += wave;
-              vWaveHeight = wave;
-            `
-          );
-
-          shader.fragmentShader = `
-            uniform float uWaveHeight;
-            varying float vWaveHeight;
-          ` + shader.fragmentShader;
-
-          shader.fragmentShader = shader.fragmentShader.replace(
-            '#include <map_fragment>',
-            `
-              #include <map_fragment>
-              
-              vec3 baseColor = diffuseColor.rgb;
-              vec3 deepColor = baseColor * 0.15;
-              vec3 crestColor = clamp(baseColor * 1.4 + vec3(0.0, 0.15, 0.2), 0.0, 1.0);
-              
-              float heightFactor = (vWaveHeight / max(0.01, uWaveHeight)) * 0.5 + 0.5;
-              heightFactor = clamp(heightFactor, 0.0, 1.0);
-              
-              vec3 waterColor = mix(deepColor, crestColor, heightFactor);
-              
-              float foamThreshold = 0.85;
-              if (heightFactor > foamThreshold) {
-                float foamIntensity = (heightFactor - foamThreshold) / (1.0 - foamThreshold);
-                waterColor = mix(waterColor, vec3(1.0, 1.0, 1.0), foamIntensity * 0.45);
-              }
-              
-              diffuseColor.rgb = waterColor;
-            `
-          );
-        }
-      }}
+      transparent={material.opacity !== undefined && material.opacity < 1.0}
+      opacity={material.opacity !== undefined ? material.opacity : 1.0}
     />
   );
 }
@@ -815,6 +935,18 @@ function renderGeometry(geometryType?: string, isWater?: boolean) {
 
 const compiledScripts: Record<string, Function> = {};
 
+// Module-scoped scratch objects for zero-allocation per-frame physics & behavior updates
+const _tempTranslation = { x: 0, y: 0, z: 0 };
+const _tempQuat = new THREE.Quaternion();
+const _tempDeltaQuat = new THREE.Quaternion();
+const _tempAxisY = new THREE.Vector3(0, 1, 0);
+const _tempEulerA = new THREE.Euler();
+const _tempEulerB = new THREE.Euler();
+const _tempQuatA = new THREE.Quaternion();
+const _tempQuatB = new THREE.Quaternion();
+const _tempVecA = new THREE.Vector3();
+const _tempVecB = new THREE.Vector3();
+
 const SceneNode = React.memo(function SceneNode({
   obj,
   isSelected,
@@ -843,8 +975,24 @@ const SceneNode = React.memo(function SceneNode({
   const activeTool = useStore((state) => state.activeTool);
 
   const objects = useStore((state) => state.objects);
+  const assets = useAssetStore((state) => state.assets);
   const children = useMemo(() => objects.filter((o) => o.parentId === obj.id), [objects, obj.id]);
   const prevIsPlaying = useRef(isPlaying);
+
+  // Eagerly compile custom scripts outside of the render loop
+  useEffect(() => {
+    if (!obj.scripts || obj.scripts.length === 0) return;
+    obj.scripts.forEach((scriptId) => {
+      const script = assets.find((a) => a.id === scriptId);
+      if (script && script.content) {
+        try {
+          compiledScripts[scriptId] = new Function('self', 'delta', script.content);
+        } catch (e: any) {
+          console.error(`[Script Compile Error] ${scriptId}:`, e.message);
+        }
+      }
+    });
+  }, [obj.scripts, assets]);
 
   useEffect(() => {
     if (prevIsPlaying.current !== isPlaying) {
@@ -879,35 +1027,66 @@ const SceneNode = React.memo(function SceneNode({
     if (isSimulating) {
       if (obj.behavior === 'spin') {
         const r = ref.current.rotation();
-        const q = new THREE.Quaternion(r.x, r.y, r.z, r.w);
-        const deltaQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), delta);
-        q.multiply(deltaQ);
-        ref.current.setRotation(q, true);
+        _tempQuat.set(r.x, r.y, r.z, r.w);
+        _tempDeltaQuat.setFromAxisAngle(_tempAxisY, delta);
+        _tempQuat.multiply(_tempDeltaQuat);
+        if (typeof ref.current.setNextKinematicRotation === 'function') {
+          ref.current.setNextKinematicRotation(_tempQuat);
+        } else {
+          ref.current.setRotation(_tempQuat, true);
+        }
       } else if (obj.behavior === 'float') {
         const t = ref.current.translation();
         const newY = initialPos.current[1] + Math.sin(state.clock.elapsedTime * 2 + obj.position[0]) * 0.5;
-        ref.current.setTranslation({ x: t.x, y: newY, z: t.z }, true);
+        _tempTranslation.x = t.x;
+        _tempTranslation.y = newY;
+        _tempTranslation.z = t.z;
+        if (typeof ref.current.setNextKinematicTranslation === 'function') {
+          ref.current.setNextKinematicTranslation(_tempTranslation);
+        } else {
+          ref.current.setTranslation(_tempTranslation, true);
+        }
       } else if (obj.behavior === 'buoyancy') {
         const t = ref.current.translation();
         const time = state.clock.elapsedTime;
         const speed = 1.5;
         const phase = obj.position[0] * 0.5 + obj.position[2] * 0.5;
         const newY = initialPos.current[1] + Math.sin(time * speed + phase) * 0.2;
-        ref.current.setTranslation({ x: t.x, y: newY, z: t.z }, true);
+        _tempTranslation.x = t.x;
+        _tempTranslation.y = newY;
+        _tempTranslation.z = t.z;
+        if (typeof ref.current.setNextKinematicTranslation === 'function') {
+          ref.current.setNextKinematicTranslation(_tempTranslation);
+        } else {
+          ref.current.setTranslation(_tempTranslation, true);
+        }
 
         const pitch = Math.sin(time * speed * 0.8 + phase) * 0.05;
         const roll = Math.cos(time * speed * 0.6 + phase + 1.0) * 0.05;
-        const initialRot = new THREE.Euler(...obj.rotation);
-        const tiltEuler = new THREE.Euler(pitch, 0, roll);
-        const q = new THREE.Quaternion().setFromEuler(initialRot).multiply(new THREE.Quaternion().setFromEuler(tiltEuler));
-        ref.current.setRotation(q, true);
+        _tempEulerA.set(obj.rotation[0], obj.rotation[1], obj.rotation[2]);
+        _tempEulerB.set(pitch, 0, roll);
+        _tempQuatA.setFromEuler(_tempEulerA);
+        _tempQuatB.setFromEuler(_tempEulerB);
+        _tempQuatA.multiply(_tempQuatB);
+        if (typeof ref.current.setNextKinematicRotation === 'function') {
+          ref.current.setNextKinematicRotation(_tempQuatA);
+        } else {
+          ref.current.setRotation(_tempQuatA, true);
+        }
       } else if (obj.behavior === 'follow') {
         const t = ref.current.translation();
-        const targetPos = state.camera.position.clone();
-        targetPos.y = t.y;
-        const currentPos = new THREE.Vector3(t.x, t.y, t.z);
-        currentPos.lerp(targetPos, delta * 1.5);
-        ref.current.setTranslation({ x: currentPos.x, y: currentPos.y, z: currentPos.z }, true);
+        _tempVecA.copy(state.camera.position);
+        _tempVecA.y = t.y;
+        _tempVecB.set(t.x, t.y, t.z);
+        _tempVecB.lerp(_tempVecA, delta * 1.5);
+        _tempTranslation.x = _tempVecB.x;
+        _tempTranslation.y = _tempVecB.y;
+        _tempTranslation.z = _tempVecB.z;
+        if (typeof ref.current.setNextKinematicTranslation === 'function') {
+          ref.current.setNextKinematicTranslation(_tempTranslation);
+        } else {
+          ref.current.setTranslation(_tempTranslation, true);
+        }
       }
     } else {
       if (obj.behavior === 'spin') {
@@ -923,33 +1102,23 @@ const SceneNode = React.memo(function SceneNode({
 
         const pitch = Math.sin(time * speed * 0.8 + phase) * 0.05;
         const roll = Math.cos(time * speed * 0.6 + phase + 1.0) * 0.05;
-        const initialRot = new THREE.Euler(...obj.rotation);
-        const tiltEuler = new THREE.Euler(pitch, 0, roll);
-        const q = new THREE.Quaternion().setFromEuler(initialRot).multiply(new THREE.Quaternion().setFromEuler(tiltEuler));
-        ref.current.rotation.setFromQuaternion(q);
+        _tempEulerA.set(obj.rotation[0], obj.rotation[1], obj.rotation[2]);
+        _tempEulerB.set(pitch, 0, roll);
+        _tempQuatA.setFromEuler(_tempEulerA);
+        _tempQuatB.setFromEuler(_tempEulerB);
+        _tempQuatA.multiply(_tempQuatB);
+        ref.current.rotation.setFromQuaternion(_tempQuatA);
       } else if (obj.behavior === 'follow') {
-        const targetPos = state.camera.position.clone();
-        targetPos.y = ref.current.position.y;
-        ref.current.position.lerp(targetPos, delta * 1.5);
-        ref.current.lookAt(targetPos);
+        _tempVecA.copy(state.camera.position);
+        _tempVecA.y = ref.current.position.y;
+        ref.current.position.lerp(_tempVecA, delta * 1.5);
+        ref.current.lookAt(_tempVecA);
       }
     }
 
     if (obj.scripts && obj.scripts.length > 0) {
       obj.scripts.forEach((scriptId) => {
-        let fn = compiledScripts[scriptId];
-        if (!fn) {
-          const script = useAssetStore.getState().assets.find((a) => a.id === scriptId);
-          if (script && script.content) {
-            try {
-              fn = new Function('self', 'delta', script.content);
-              compiledScripts[scriptId] = fn;
-            } catch (e: any) {
-              console.error(`[Script Compile Error] ${scriptId}:`, e.message);
-            }
-          }
-        }
-
+        const fn = compiledScripts[scriptId];
         if (fn) {
           try {
             fn(ref.current, delta);
@@ -965,6 +1134,7 @@ const SceneNode = React.memo(function SceneNode({
     <group
       ref={isSimulating ? null : handleRef}
       name={obj.name}
+      userData={{ id: obj.id }}
       position={isSimulating ? [0, 0, 0] : obj.position}
       rotation={isSimulating ? [0, 0, 0] : obj.rotation}
       scale={obj.scale}
@@ -1057,15 +1227,35 @@ const SceneNode = React.memo(function SceneNode({
         )}
 
         {obj.type === 'gltf' && obj.url && (
-          <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
-            <GltfModel url={obj.url} isPlayer={obj.id === 'obj_player'} />
-          </Suspense>
+          <ModelErrorBoundary
+            assetName={obj.name}
+            fallback={
+              <mesh>
+                <boxGeometry args={[1, 1, 1]} />
+                <meshBasicMaterial color="#ef4444" wireframe />
+              </mesh>
+            }
+          >
+            <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
+              <GltfModel url={obj.url} isPlayer={obj.id === 'obj_player'} objId={obj.id} />
+            </Suspense>
+          </ModelErrorBoundary>
         )}
 
         {(obj.type as string) === 'fbx' && obj.url && (
-          <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
-            <FbxModel url={obj.url} />
-          </Suspense>
+          <ModelErrorBoundary
+            assetName={obj.name}
+            fallback={
+              <mesh>
+                <boxGeometry args={[1, 1, 1]} />
+                <meshBasicMaterial color="#ef4444" wireframe />
+              </mesh>
+            }
+          >
+            <Suspense fallback={<meshBasicMaterial wireframe color="#3b82f6" />}>
+              <FbxModel url={obj.url} objId={obj.id} />
+            </Suspense>
+          </ModelErrorBoundary>
         )}
 
         {obj.type === 'light' && obj.lightProps && (
@@ -1201,11 +1391,11 @@ const SceneNode = React.memo(function SceneNode({
         groupContent
       )}
 
-      {isSelected && !isPlaying && activeTool !== 'foliage' && obj.type !== 'group' && (
+      {isSelected && selectedIds.length === 1 && !isPlaying && activeTool !== 'foliage' && obj.type !== 'group' && (
         <GizmoWrapper
           objRef={ref}
           objId={obj.id}
-          transformMode={transformMode}
+          transformMode={transformMode === 'select' ? 'translate' : transformMode}
           snapGrid={snapGrid}
           snapValue={snapValue}
           setOrbitEnabled={setOrbitEnabled}
@@ -1410,16 +1600,269 @@ function GizmoWrapper({
           clearTimeout(safetyTimer.current);
           safetyTimer.current = null;
         }
-        if (objRef.current) {
-          const o = objRef.current;
-          updateObject(objId, {
-            position: [o.position.x, o.position.y, o.position.z],
-            rotation: [o.rotation.x, o.rotation.y, o.rotation.z],
-            scale: [o.scale.x, o.scale.y, o.scale.z],
-          });
-        }
+        // DO NOT call updateObject() here!
+        // TransformControls updates objRef.current in real-time.
+        // Full Zustand store update + Zundo history occurs onMouseUp (releaseGrasp).
       }}
     />
+  );
+}
+
+/**
+ * MultiSelectionGizmo — renders a unified transform handle positioned at the shared centroid
+ * when multiple objects are selected simultaneously.
+ * Supports translation, rotation around centroid, and scaling from centroid.
+ */
+function MultiSelectionGizmo({
+  setOrbitEnabled,
+}: {
+  setOrbitEnabled: (v: boolean) => void;
+}) {
+  const { scene } = useThree();
+  const selectedIds = useStore((s) => s.selectedIds);
+  const objects = useStore((s) => s.objects);
+  const transformMode = useStore((s) => s.transformMode);
+  const snapGrid = useStore((s) => s.snapGrid);
+  const snapValue = useStore((s) => s.snapValue);
+  const isPlaying = useStore((s) => s.isPlaying);
+  const activeTool = useStore((s) => s.activeTool);
+  const updateObjects = useStore((s) => s.updateObjects);
+
+  const anchorRef = useRef<THREE.Group>(null);
+  const [tc, setTc] = useState<any>(null);
+  const isDragging = useRef(false);
+  const safetyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const selectedStoreObjects = useMemo(() => {
+    if (selectedIds.length <= 1) return [];
+    return objects.filter(
+      (o) => selectedIds.includes(o.id) && o.type !== 'group' && o.visible !== false
+    );
+  }, [selectedIds, objects]);
+
+  // Compute shared centroid position across all selected objects
+  const currentCentroid = useMemo(() => {
+    if (selectedStoreObjects.length === 0) return null;
+    let sumX = 0;
+    let sumY = 0;
+    let sumZ = 0;
+    for (let i = 0; i < selectedStoreObjects.length; i++) {
+      const p = selectedStoreObjects[i].position;
+      sumX += p[0];
+      sumY += p[1];
+      sumZ += p[2];
+    }
+    const count = selectedStoreObjects.length;
+    return new THREE.Vector3(sumX / count, sumY / count, sumZ / count);
+  }, [selectedStoreObjects]);
+
+  // Sync anchor group position to centroid when not dragging
+  useEffect(() => {
+    if (!isDragging.current && anchorRef.current && currentCentroid) {
+      anchorRef.current.position.copy(currentCentroid);
+      anchorRef.current.quaternion.identity();
+      anchorRef.current.scale.set(1, 1, 1);
+      anchorRef.current.updateMatrixWorld(true);
+    }
+  }, [currentCentroid]);
+
+  // Store snapshot of transforms when drag commences
+  const dragSnapshotRef = useRef<{
+    initialCentroid: THREE.Vector3;
+    objects: Array<{
+      id: string;
+      node: THREE.Object3D;
+      initialPos: THREE.Vector3;
+      initialQuat: THREE.Quaternion;
+      initialScale: THREE.Vector3;
+      offsetFromCentroid: THREE.Vector3;
+    }>;
+  } | null>(null);
+
+  const releaseGrasp = useCallback(() => {
+    if (!isDragging.current) return;
+    isDragging.current = false;
+
+    if (safetyTimer.current) {
+      clearTimeout(safetyTimer.current);
+      safetyTimer.current = null;
+    }
+
+    setOrbitEnabled(true);
+    document.body.style.cursor = '';
+    useStore.getState().setGizmoFocused(false);
+
+    if (dragSnapshotRef.current) {
+      const updatesMap: Record<string, Partial<SceneObject>> = {};
+      for (const item of dragSnapshotRef.current.objects) {
+        const node = item.node;
+        updatesMap[item.id] = {
+          position: [node.position.x, node.position.y, node.position.z],
+          rotation: [node.rotation.x, node.rotation.y, node.rotation.z],
+          scale: [node.scale.x, node.scale.y, node.scale.z],
+        };
+      }
+      updateObjects(updatesMap);
+      dragSnapshotRef.current = null;
+    }
+  }, [setOrbitEnabled, updateObjects]);
+
+  // Global safety listeners
+  useEffect(() => {
+    const onGlobalPointerUp = () => {
+      if (isDragging.current) releaseGrasp();
+      useStore.getState().setGizmoFocused(false);
+    };
+    const onBlurOrHidden = () => {
+      if (isDragging.current) releaseGrasp();
+      useStore.getState().setGizmoFocused(false);
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden && isDragging.current) releaseGrasp();
+    };
+
+    window.addEventListener('pointerup', onGlobalPointerUp);
+    window.addEventListener('blur', onBlurOrHidden);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pointerup', onGlobalPointerUp);
+      window.removeEventListener('blur', onBlurOrHidden);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      if (isDragging.current) {
+        isDragging.current = false;
+        setOrbitEnabled(true);
+        document.body.style.cursor = '';
+      }
+      useStore.getState().setGizmoFocused(false);
+      if (safetyTimer.current) {
+        clearTimeout(safetyTimer.current);
+        safetyTimer.current = null;
+      }
+    };
+  }, [releaseGrasp, setOrbitEnabled]);
+
+  // Gizmo handle hover detection
+  useEffect(() => {
+    if (!tc) return;
+    const domEl = tc.domElement || tc.el;
+    if (!domEl) return;
+
+    const onPointerMove = () => {
+      if (isDragging.current) return;
+      const isOverHandle = (tc as any).axis !== null;
+      const state = useStore.getState();
+      if (isOverHandle !== state.gizmoFocused) {
+        state.setGizmoFocused(isOverHandle);
+      }
+      document.body.style.cursor = isOverHandle ? 'grab' : '';
+    };
+
+    const onPointerDown = () => {
+      const axis = (tc as any).axis;
+      if (axis !== null) {
+        useStore.getState().setGizmoFocused(true);
+      }
+    };
+
+    domEl.addEventListener('pointermove', onPointerMove);
+    domEl.addEventListener('pointerdown', onPointerDown, true);
+
+    return () => {
+      domEl.removeEventListener('pointermove', onPointerMove);
+      domEl.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }, [tc]);
+
+  if (isPlaying || activeTool === 'foliage' || selectedStoreObjects.length <= 1 || !currentCentroid) {
+    return null;
+  }
+
+  return (
+    <>
+      <group ref={anchorRef} position={currentCentroid.toArray()} name="multi_selection_anchor" />
+      {anchorRef.current && (
+        <TransformControls
+          ref={setTc}
+          object={anchorRef}
+          mode={transformMode === 'select' ? 'translate' : transformMode}
+          size={1.35}
+          translationSnap={snapGrid ? snapValue : null}
+          rotationSnap={snapGrid ? Math.PI / 8 : null}
+          scaleSnap={snapGrid ? 0.5 : null}
+          onMouseDown={() => {
+            if (!anchorRef.current) return;
+            isDragging.current = true;
+            setOrbitEnabled(false);
+            document.body.style.cursor = 'grabbing';
+
+            const exportScene = scene.getObjectByName('export_scene');
+            if (!exportScene) return;
+
+            const snapList: NonNullable<typeof dragSnapshotRef.current>['objects'] = [];
+            const initialCentroid = anchorRef.current.position.clone();
+
+            for (const obj of selectedStoreObjects) {
+              let node: THREE.Object3D | null = null;
+              exportScene.traverse((child) => {
+                if (!node && (child.userData?.id === obj.id || (child.name === obj.name && child !== exportScene))) {
+                  node = child;
+                }
+              });
+
+              if (node) {
+                const initialPos = (node as THREE.Object3D).position.clone();
+                const initialQuat = (node as THREE.Object3D).quaternion.clone();
+                const initialScale = (node as THREE.Object3D).scale.clone();
+                const offset = initialPos.clone().sub(initialCentroid);
+
+                snapList.push({
+                  id: obj.id,
+                  node: node as THREE.Object3D,
+                  initialPos,
+                  initialQuat,
+                  initialScale,
+                  offsetFromCentroid: offset,
+                });
+              }
+            }
+
+            dragSnapshotRef.current = {
+              initialCentroid,
+              objects: snapList,
+            };
+          }}
+          onMouseUp={releaseGrasp}
+          onChange={() => {
+            if (!isDragging.current || !dragSnapshotRef.current || !anchorRef.current) return;
+            if (safetyTimer.current) {
+              clearTimeout(safetyTimer.current);
+              safetyTimer.current = null;
+            }
+
+            const { initialCentroid, objects: snapObjects } = dragSnapshotRef.current;
+            const currentAnchorPos = anchorRef.current.position;
+            const anchorQuat = anchorRef.current.quaternion;
+            const anchorScale = anchorRef.current.scale;
+
+            for (const item of snapObjects) {
+              // 1. Scaled and rotated offset from anchor
+              const scaledOffset = item.offsetFromCentroid.clone().multiply(anchorScale);
+              scaledOffset.applyQuaternion(anchorQuat);
+              item.node.position.copy(currentAnchorPos).add(scaledOffset);
+
+              // 2. Combined orientation
+              item.node.quaternion.copy(anchorQuat).multiply(item.initialQuat);
+
+              // 3. Combined scale
+              item.node.scale.copy(item.initialScale).multiply(anchorScale);
+
+              item.node.updateMatrixWorld(true);
+            }
+          }}
+        />
+      )}
+    </>
   );
 }
 
@@ -2236,31 +2679,17 @@ function CameraController({ orbitRef }: { orbitRef: React.RefObject<any> }) {
 function ExportHelper() {
   const { scene } = useThree();
   useEffect(() => {
-    const handleExport = () => {
-      const exportScene = scene.getObjectByName('export_scene');
-      if (exportScene) {
-        const exporter = new GLTFExporter();
-        exporter.parse(
-          exportScene,
-          (gltf) => {
-            const output = JSON.stringify(gltf, null, 2);
-            const blob = new Blob([output], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.style.display = 'none';
-            a.href = url;
-            a.download = 'scene.gltf';
-            document.body.appendChild(a);
-            a.click();
-            URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-          },
-          (error) => {
-            console.error('An error happened during parsing', error);
-          },
-          {},
-        );
-      }
+    const handleExport = (e: any) => {
+      const exportScene = scene.getObjectByName('export_scene') || scene;
+      const isBinary = e?.detail?.binary ?? false;
+      const filename = e?.detail?.filename ?? (isBinary ? 'scene.glb' : 'scene.gltf');
+
+      exportSceneWithPipeline(exportScene, {
+        binary: isBinary,
+        filename,
+      }).catch((err) => {
+        console.error('[ExportHelper] Export pipeline failed:', err);
+      });
     };
     window.addEventListener('export_gltf', handleExport);
     return () => window.removeEventListener('export_gltf', handleExport);
@@ -2269,12 +2698,200 @@ function ExportHelper() {
   return null;
 }
 
+function BoneVisualizer() {
+  const workspaceMode = useStore((s) => s.workspaceMode);
+  const activeClonedScene = useStore((s) => s.activeClonedScene);
+  const selectedBoneId = useStore((s) => s.selectedBoneId);
+  const transformMode = useStore((s) => s.transformMode);
+  const helperRef = useRef<THREE.SkeletonHelper | null>(null);
+  const { scene } = useThree();
+
+  useEffect(() => {
+    if (workspaceMode !== 'animation' || !activeClonedScene) {
+      if (helperRef.current) {
+        scene.remove(helperRef.current);
+        helperRef.current.dispose();
+        helperRef.current = null;
+      }
+      return;
+    }
+
+    const helper = new THREE.SkeletonHelper(activeClonedScene);
+    (helper.material as THREE.LineBasicMaterial).linewidth = 3;
+    (helper.material as THREE.LineBasicMaterial).depthTest = false;
+    (helper.material as THREE.LineBasicMaterial).transparent = true;
+    (helper.material as THREE.LineBasicMaterial).opacity = 0.85;
+    helperRef.current = helper;
+    scene.add(helper);
+
+    return () => {
+      if (helperRef.current) {
+        scene.remove(helperRef.current);
+        helperRef.current.dispose();
+        helperRef.current = null;
+      }
+    };
+  }, [workspaceMode, activeClonedScene, scene]);
+
+  useFrame(() => {
+    if (helperRef.current) {
+      (helperRef.current as any).update();
+    }
+  });
+
+  const selectedBoneObject = useMemo(() => {
+    if (!activeClonedScene || !selectedBoneId) return null;
+    let found: THREE.Object3D | null = null;
+    activeClonedScene.traverse((child: any) => {
+      if (child.name === selectedBoneId || child.uuid === selectedBoneId) {
+        found = child;
+      }
+    });
+    return found;
+  }, [activeClonedScene, selectedBoneId]);
+
+  if (workspaceMode !== 'animation') return null;
+
+  return (
+    <>
+      {selectedBoneObject && (
+        <TransformControls
+          object={selectedBoneObject}
+          mode={transformMode === 'select' ? 'rotate' : transformMode}
+          size={0.75}
+          space="local"
+        />
+      )}
+    </>
+  );
+}
+
+function AssetStagingIndicator() {
+  const [progress, setProgress] = useState<StagingProgressEvent>({
+    total: 0,
+    completed: 0,
+    inFlight: 0,
+    percent: 100,
+  });
+
+  useEffect(() => {
+    return AssetStagingManager.subscribeProgress((p) => {
+      setProgress(p);
+    });
+  }, []);
+
+  if (progress.total === 0 || progress.percent >= 100) return null;
+
+  return (
+    <div className="absolute top-4 left-4 z-40 bg-bg-panel/90 backdrop-blur-md border border-accent/40 px-3 py-2 rounded-xl shadow-lg flex items-center gap-2.5 text-xs text-text-primary animate-in fade-in slide-in-from-top-2 duration-200 select-none pointer-events-none">
+      <div className="w-3.5 h-3.5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+      <div className="flex flex-col">
+        <span className="font-semibold text-[11px] text-white">Staging 3D Assets...</span>
+        <span className="text-[10px] text-text-secondary">
+          {progress.completed} of {progress.total} assets staged ({progress.percent}%)
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * SpatialAudioSceneController — mounts AudioListener to camera,
+ * manages 3D PositionalAudio nodes for objects with audioProps,
+ * and renders falloff debug spheres for selected audio objects in editor mode.
+ */
+function SpatialAudioSceneController() {
+  const { camera, scene } = useThree();
+  const objects = useStore((s) => s.objects);
+  const selectedIds = useStore((s) => s.selectedIds);
+  const isPlaying = useStore((s) => s.isPlaying);
+
+  // Attach listener to camera once
+  useEffect(() => {
+    const listener = SpatialAudioManager.getListener();
+    if (camera && !camera.children.includes(listener)) {
+      camera.add(listener);
+    }
+    return () => {
+      if (camera && camera.children.includes(listener)) {
+        camera.remove(listener);
+      }
+    };
+  }, [camera]);
+
+  // Sync scene object audio
+  useEffect(() => {
+    const exportScene = scene.getObjectByName('export_scene');
+    if (!exportScene) return;
+
+    for (const obj of objects) {
+      if (obj.audioProps?.url) {
+        let node: THREE.Object3D | null = null;
+        exportScene.traverse((child) => {
+          if (!node && (child.userData?.id === obj.id || (child.name === obj.name && child !== exportScene))) {
+            node = child;
+          }
+        });
+
+        if (node) {
+          SpatialAudioManager.attachAudioToObject(node, obj.id, obj.audioProps.url, {
+            ...obj.audioProps,
+            muted: !isPlaying && obj.audioProps.autoplay === false,
+          });
+        }
+      } else {
+        SpatialAudioManager.removeAudio(obj.id);
+      }
+    }
+  }, [objects, isPlaying, scene]);
+
+  // Find selected object with spatial audio props for falloff wireframe visualization
+  const selectedAudioObj = useMemo(() => {
+    if (isPlaying || selectedIds.length !== 1) return null;
+    return (
+      objects.find(
+        (o) => o.id === selectedIds[0] && o.audioProps?.url && o.audioProps?.sourceType !== 'ambient'
+      ) || null
+    );
+  }, [objects, selectedIds, isPlaying]);
+
+  if (!selectedAudioObj || !selectedAudioObj.audioProps) return null;
+
+  const refDist = selectedAudioObj.audioProps.refDistance ?? 1;
+  const maxDist = selectedAudioObj.audioProps.maxDistance ?? selectedAudioObj.audioProps.distance ?? 50;
+
+  return (
+    <group position={selectedAudioObj.position}>
+      {/* Ref Distance Sphere (100% Volume Horizon) */}
+      <mesh>
+        <sphereGeometry args={[refDist, 16, 16]} />
+        <meshBasicMaterial color="#10b981" wireframe transparent opacity={0.35} />
+      </mesh>
+
+      {/* Max Distance Sphere (Audible Boundary) */}
+      <mesh>
+        <sphereGeometry args={[maxDist, 24, 24]} />
+        <meshBasicMaterial color="#059669" wireframe transparent opacity={0.12} />
+      </mesh>
+    </group>
+  );
+}
+
 export default function Viewport() {
   const { objects, selectedIds, selectObject, environment, addObject, isPlaying, isPaused, togglePause, setPaused, showGrid, sidebarVisible, bottomPanelVisible, inspectorVisible, toggleSidebar, toggleBottomPanel, toggleInspector } = useStore();
   const showOverlays = useStore((state) => state.showOverlays);
   const showPhysicsDebug = useStore((state) => state.showPhysicsDebug);
   const isPickingAsset = useStore((state) => state.isPickingAsset);
   const activePickerTarget = useStore((state) => state.activePickerTarget);
+
+  // Background asset pre-staging for any 3D models in current scene
+  useEffect(() => {
+    objects.forEach((obj) => {
+      if (obj.url && (obj.type === 'gltf' || (obj.type as string) === 'fbx')) {
+        AssetStagingManager.stageAsset(obj.url, obj.type as any).catch(() => {});
+      }
+    });
+  }, [objects]);
 
   const sunObj = objects.find((o) => o.id === 'obj_sun');
   const sunPosition = sunObj ? sunObj.position : [10, 20, 10];
@@ -2306,6 +2923,8 @@ export default function Viewport() {
   }, []);
   const [orbitEnabled, setOrbitEnabled] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
+  const [marqueeBox, setMarqueeBox] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null);
+  const [marqueeSelectedIds, setMarqueeSelectedIds] = useState<string[]>([]);
   const orbitRef = useRef<any>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -2413,6 +3032,7 @@ export default function Viewport() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      <AssetStagingIndicator />
       {isPickingAsset && (
         <div className="absolute inset-0 bg-neutral-950/45 backdrop-blur-[1px] z-[45] flex flex-col items-center justify-center pointer-events-none select-none">
           <div className="bg-bg-panel/95 backdrop-blur-md border border-accent/40 px-5 py-3.5 rounded-2xl shadow-2xl flex flex-col items-center gap-2 max-w-sm text-center animate-in fade-in zoom-in-95 duration-200">
@@ -2523,6 +3143,7 @@ export default function Viewport() {
         <>
           <Suspense fallback={null}>
             <DayNightCycle />
+            <BoneVisualizer />
 
             <Physics paused={!isPlaying || isPaused} debug={showPhysicsDebug} gravity={[0, environment.gravity ?? -9.81, 0]}>
               <group name="export_scene">
@@ -2562,7 +3183,14 @@ export default function Viewport() {
         <ExportHelper />
         <FoliageRenderer />
         <FoliagePainterController />
-
+        <SpatialAudioSceneController />
+        {!isPlaying && <MultiSelectionGizmo setOrbitEnabled={setOrbitEnabled} />}
+        {!isPlaying && (
+          <MarqueeSelectionController
+            setMarqueeBox={setMarqueeBox}
+            setMarqueeSelectedIds={setMarqueeSelectedIds}
+          />
+        )}
 
         {!isPlaying && <CameraController orbitRef={orbitRef} />}
 
@@ -2586,6 +3214,19 @@ export default function Viewport() {
           </GizmoHelper>
         )}
       </Canvas>
+
+      {/* Marquee Selection Rectangle Overlay */}
+      {marqueeBox && (
+        <div
+          className="absolute pointer-events-none border border-sky-400 bg-sky-500/20 rounded-[2px] z-40 backdrop-blur-[0.5px] shadow-[0_0_8px_rgba(56,189,248,0.25)]"
+          style={{
+            left: Math.min(marqueeBox.startX, marqueeBox.endX),
+            top: Math.min(marqueeBox.startY, marqueeBox.endY),
+            width: Math.abs(marqueeBox.endX - marqueeBox.startX),
+            height: Math.abs(marqueeBox.endY - marqueeBox.startY),
+          }}
+        />
+      )}
 
       {/* Meta Overlay */}
       {!isPlaying && (
@@ -3328,37 +3969,7 @@ function BlizzardCirrusClouds() {
 }
 
 function useDynamicTexture(url: string | null) {
-  const [texture, setTexture] = useState<THREE.Texture | null>(null);
-
-  useEffect(() => {
-    if (!url) {
-      setTexture(null);
-      return;
-    }
-
-    const loader = new THREE.TextureLoader();
-    let active = true;
-
-    loader.load(
-      url,
-      (tex) => {
-        if (active) {
-          tex.needsUpdate = true;
-          setTexture(tex);
-        }
-      },
-      undefined,
-      (err) => {
-        console.error('Failed to load dynamic texture:', err);
-      }
-    );
-
-    return () => {
-      active = false;
-    };
-  }, [url]);
-
-  return texture;
+  return useManagedTexture(url, { repeatX: 1, repeatY: 1 });
 }
 
 function RainParticles() {
@@ -3672,10 +4283,124 @@ function SnowParticles() {
   );
 }
 
+let cachedCircleTexture: THREE.CanvasTexture | null = null;
+function getCircleTexture() {
+  if (cachedCircleTexture) return cachedCircleTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+    gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.6)');
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 32, 32);
+  }
+  cachedCircleTexture = new THREE.CanvasTexture(canvas);
+  return cachedCircleTexture;
+}
+
+let cachedRealisticTexture: THREE.CanvasTexture | null = null;
+function getRealisticTexture() {
+  if (cachedRealisticTexture) return cachedRealisticTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.clearRect(0, 0, 64, 64);
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = 64;
+    tempCanvas.height = 64;
+    const tempCtx = tempCanvas.getContext('2d');
+    if (tempCtx) {
+      const drawPuff = (x: number, y: number, r: number, op: number) => {
+        tempCtx.fillStyle = `rgba(255, 255, 255, ${op})`;
+        tempCtx.beginPath();
+        tempCtx.arc(x, y, r, 0, Math.PI * 2);
+        tempCtx.fill();
+      };
+      drawPuff(32, 32, 13, 0.45);
+      const numPuffs = 12;
+      for (let i = 0; i < numPuffs; i++) {
+        const angle = (i / numPuffs) * Math.PI * 2;
+        const dist = 6 + Math.sin(angle * 3) * 6 + Math.cos(angle * 5) * 3;
+        const px = 32 + Math.cos(angle) * dist;
+        const py = 32 + Math.sin(angle) * dist;
+        const size = 5 + Math.random() * 8;
+        drawPuff(px, py, size, 0.15 + Math.random() * 0.2);
+      }
+      ctx.filter = 'blur(4px)';
+      ctx.drawImage(tempCanvas, 0, 0);
+    }
+    const imgData = ctx.getImageData(0, 0, 64, 64);
+    const data = imgData.data;
+    for (let y = 0; y < 64; y++) {
+      for (let x = 0; x < 64; x++) {
+        const idx = (y * 64 + x) * 4;
+        const alpha = data[idx + 3];
+        if (alpha > 0) {
+          const nx = x - 32;
+          const ny = y - 32;
+          const dist = Math.sqrt(nx * nx + ny * ny);
+          const s1 = Math.sin(x * 0.35 + 2.0) * Math.cos(y * 0.35 + 1.0);
+          const s2 = Math.sin(x * 0.7 + y * 0.4) * 0.45;
+          const noise = (s1 + s2 + 1.45) / 2.9;
+          const edgeFade = Math.max(0, 1 - (dist / 32));
+          data[idx + 3] = alpha * (0.55 + noise * 0.45) * edgeFade;
+        }
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }
+  cachedRealisticTexture = new THREE.CanvasTexture(canvas);
+  return cachedRealisticTexture;
+}
+
+let cachedSparkTexture: THREE.CanvasTexture | null = null;
+function getSparkTexture() {
+  if (cachedSparkTexture) return cachedSparkTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 32;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.clearRect(0, 0, 32, 32);
+    const baseGrad = ctx.createRadialGradient(16, 16, 0, 16, 16, 10);
+    baseGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+    baseGrad.addColorStop(0.4, 'rgba(255, 255, 255, 0.4)');
+    baseGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+    ctx.fillStyle = baseGrad;
+    ctx.beginPath();
+    ctx.arc(16, 16, 16, 0, Math.PI * 2);
+    ctx.fill();
+    const flareGradX = ctx.createLinearGradient(0, 16, 32, 16);
+    flareGradX.addColorStop(0, 'rgba(255, 255, 255, 0.0)');
+    flareGradX.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)');
+    flareGradX.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+    ctx.strokeStyle = flareGradX;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 16);
+    ctx.lineTo(32, 16);
+    ctx.stroke();
+    const flareGradY = ctx.createLinearGradient(16, 0, 16, 32);
+    flareGradY.addColorStop(0, 'rgba(255, 255, 255, 0.0)');
+    flareGradY.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)');
+    flareGradY.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+    ctx.strokeStyle = flareGradY;
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.lineTo(16, 32);
+    ctx.stroke();
+  }
+  cachedSparkTexture = new THREE.CanvasTexture(canvas);
+  return cachedSparkTexture;
+}
 
 function ParticleEmitter({ type, isPlaying, particleProps }: { type: string; isPlaying: boolean; particleProps?: SceneObject['particleProps'] }) {
-  const environment = useStore((state) => state.environment);
-
   const count = particleProps?.count ?? 150;
   const speedVal = particleProps?.speed ?? 1.5;
   const sizeVal = particleProps?.size ?? (type === 'fire' ? 0.35 : type === 'tornado' ? 0.55 : type === 'smoke' ? 0.55 : type === 'water' ? 0.25 : type === 'sparks' ? 0.15 : 0.2);
@@ -3687,760 +4412,242 @@ function ParticleEmitter({ type, isPlaying, particleProps }: { type: string; isP
   const emitSparks = particleProps?.emitSparks ?? true;
   const sparksBlendMode = particleProps?.sparksBlendMode ?? 'additive';
   const sparksEmissionRate = particleProps?.sparksEmissionRate ?? 200;
-  const applyPhysics = particleProps?.applyPhysics ?? true;
   const spreadVal = particleProps?.spread ?? 1.0;
 
   const pointsRef = React.useRef<THREE.Points>(null);
+  const embersRef = React.useRef<THREE.Points>(null);
 
-  // Soft radial circle texture generated procedurally
-  const circleTexture = React.useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-      gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
-      gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.6)');
-      gradient.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, 32, 32);
-    }
-    return new THREE.CanvasTexture(canvas);
-  }, []);
-
-  // Realistic turbulent fluffy wispy flame/smoke texture generated procedurally
-  const realisticTexture = React.useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 64;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.clearRect(0, 0, 64, 64);
-
-      // Create organic fluffy puff shapes by combining multiple offscreen bubbles
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = 64;
-      tempCanvas.height = 64;
-      const tempCtx = tempCanvas.getContext('2d');
-      if (tempCtx) {
-        const drawPuff = (x: number, y: number, r: number, op: number) => {
-          tempCtx.fillStyle = `rgba(255, 255, 255, ${op})`;
-          tempCtx.beginPath();
-          tempCtx.arc(x, y, r, 0, Math.PI * 2);
-          tempCtx.fill();
-        };
-
-        // Core mass
-        drawPuff(32, 32, 13, 0.45);
-        
-        // Dynamic fractal boundary satellites
-        const numPuffs = 12;
-        for (let i = 0; i < numPuffs; i++) {
-          const angle = (i / numPuffs) * Math.PI * 2;
-          const dist = 6 + Math.sin(angle * 3) * 6 + Math.cos(angle * 5) * 3;
-          const px = 32 + Math.cos(angle) * dist;
-          const py = 32 + Math.sin(angle) * dist;
-          const size = 5 + Math.random() * 8;
-          drawPuff(px, py, size, 0.15 + Math.random() * 0.2);
-        }
-
-        // Draw overlapping fluffy shape using canvas blur filter for premium realistic blending
-        ctx.filter = 'blur(4px)';
-        ctx.drawImage(tempCanvas, 0, 0);
-      }
-
-      // Add high-fidelity internal wispiness and edge fade
-      const imgData = ctx.getImageData(0, 0, 64, 64);
-      const data = imgData.data;
-      for (let y = 0; y < 64; y++) {
-        for (let x = 0; x < 64; x++) {
-          const idx = (y * 64 + x) * 4;
-          const alpha = data[idx + 3];
-          if (alpha > 0) {
-            const nx = x - 32;
-            const ny = y - 32;
-            const dist = Math.sqrt(nx * nx + ny * ny);
-
-            // High frequency wave modulation to mimic micro-turbulences
-            const s1 = Math.sin(x * 0.35 + 2.0) * Math.cos(y * 0.35 + 1.0);
-            const s2 = Math.sin(x * 0.7 + y * 0.4) * 0.45;
-            const noise = (s1 + s2 + 1.45) / 2.9; // normalized noise
-
-            const edgeFade = Math.max(0, 1 - (dist / 32));
-            data[idx + 3] = alpha * (0.55 + noise * 0.45) * edgeFade;
-          }
-        }
-      }
-      ctx.putImageData(imgData, 0, 0);
-    }
-    return new THREE.CanvasTexture(canvas);
-  }, []);
-
-  // Sharp cross-star texture generated procedurally
-  const sparkTexture = React.useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      // Clear canvas
-      ctx.clearRect(0, 0, 32, 32);
-
-      // Radial base glow
-      const baseGrad = ctx.createRadialGradient(16, 16, 0, 16, 16, 10);
-      baseGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
-      baseGrad.addColorStop(0.4, 'rgba(255, 255, 255, 0.4)');
-      baseGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-      ctx.fillStyle = baseGrad;
-      ctx.beginPath();
-      ctx.arc(16, 16, 16, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Sharp flares
-      const flareGradX = ctx.createLinearGradient(0, 16, 32, 16);
-      flareGradX.addColorStop(0, 'rgba(255, 255, 255, 0.0)');
-      flareGradX.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)');
-      flareGradX.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-      ctx.strokeStyle = flareGradX;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(0, 16);
-      ctx.lineTo(32, 16);
-      ctx.stroke();
-
-      const flareGradY = ctx.createLinearGradient(16, 0, 16, 32);
-      flareGradY.addColorStop(0, 'rgba(255, 255, 255, 0.0)');
-      flareGradY.addColorStop(0.5, 'rgba(255, 255, 255, 1.0)');
-      flareGradY.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-      ctx.strokeStyle = flareGradY;
-      ctx.beginPath();
-      ctx.moveTo(16, 0);
-      ctx.lineTo(16, 32);
-      ctx.stroke();
-    }
-    return new THREE.CanvasTexture(canvas);
-  }, []);
+  const circleTexture = getCircleTexture();
+  const realisticTexture = getRealisticTexture();
+  const sparkTexture = getSparkTexture();
 
   const activeTexture = React.useMemo(() => {
     if (shapeVal === 'circle') return circleTexture;
     if (shapeVal === 'realistic') return realisticTexture;
     if (shapeVal === 'spark') return sparkTexture;
-    return null; // Square has no texture
+    return null;
   }, [shapeVal, circleTexture, realisticTexture, sparkTexture]);
 
-  // Convert custom hex tint color to RGB multiplier dynamically
-  const tintColor = React.useMemo(() => {
-    return new THREE.Color(colorVal);
-  }, [colorVal]);
+  const tintColor = React.useMemo(() => new THREE.Color(colorVal), [colorVal]);
 
-  // Initialize particle positions, dynamic variables, color, size, and alpha vertex arrays
-  const [positions, variables, colors, sizes, alphas] = React.useMemo(() => {
+  const [positions, phases, velocities, maxLifes] = React.useMemo(() => {
     const pos = new Float32Array(count * 3);
-    const vars = new Float32Array(count * 3); // [remainingLife, maxLife, seed/phase]
-    const cols = new Float32Array(count * 3); // [r, g, b] per vertex
-    const szs = new Float32Array(count); // Per-particle size array
-    const als = new Float32Array(count); // Per-particle alpha array
-    
-    const maxLife = lifetimeVal;
-    for (let i = 0; i < count; i++) {
-      // Pre-warm particles uniformly over their lifespan so there is no cold-start
-      const startLifePct = Math.random();
-      const currentLife = startLifePct * maxLife;
-      vars[i * 3] = currentLife; // remainingLife
-      vars[i * 3 + 1] = maxLife;  // maxLife
-      vars[i * 3 + 2] = Math.random() * Math.PI * 2; // phase angle / seed
-
-      // Distribute positions based on life progression to warm the flame column
-      const progress = 1.0 - (currentLife / maxLife);
-      const height = progress * maxLife;
-      pos[i * 3 + 1] = height; // Y height
-
-      // Scatter base
-      const rCoeff = Math.abs(Math.sin(vars[i * 3 + 2] * 14.3));
-      const neckFactor = progress < 0.15 ? 1.0 : (progress < 0.5 ? 0.35 : 0.9);
-      const baseRadius = 0.28 * spreadVal * (sizeVal / 0.38) * neckFactor * (1.1 - progress * 0.4) * rCoeff;
-      pos[i * 3] = Math.cos(vars[i * 3 + 2]) * baseRadius;
-      pos[i * 3 + 2] = Math.sin(vars[i * 3 + 2]) * baseRadius;
-
-      szs[i] = sizeVal;
-      als[i] = 0.0;
-    }
-    return [pos, vars, cols, szs, als];
-  }, [type, count, sizeVal, lifetimeVal, spreadVal]);
-
-  const posAttributeRef = React.useRef<THREE.BufferAttribute>(null);
-  const colAttributeRef = React.useRef<THREE.BufferAttribute>(null);
-  const sizeAttributeRef = React.useRef<THREE.BufferAttribute>(null);
-  const alphaAttributeRef = React.useRef<THREE.BufferAttribute>(null);
-
-  // Embers refs & attributes for cinematic sparks/embers overlay
-  const embersRef = React.useRef<THREE.Points>(null);
-  const embersPosRef = React.useRef<THREE.BufferAttribute>(null);
-  const embersColRef = React.useRef<THREE.BufferAttribute>(null);
-  const embersSizeRef = React.useRef<THREE.BufferAttribute>(null);
-  const embersAlphaRef = React.useRef<THREE.BufferAttribute>(null);
-
-  const embersCount = Math.floor(sparksEmissionRate * 1.5);
-
-  // Initialize embers positions, dynamic variables, colors, sizes, and alphas
-  const [embersPositions, embersVariables, embersColors, embersSizes, embersAlphas] = React.useMemo(() => {
-    if (type !== 'fire') return [new Float32Array(0), new Float32Array(0), new Float32Array(0), new Float32Array(0), new Float32Array(0)];
-    const pos = new Float32Array(embersCount * 3);
-    const vars = new Float32Array(embersCount * 3); // [remainingLife, maxLife, phaseAngle]
-    const cols = new Float32Array(embersCount * 3);
-    const szs = new Float32Array(embersCount);
-    const als = new Float32Array(embersCount);
-    
-    const maxLife = lifetimeVal * 0.8;
-    for (let i = 0; i < embersCount; i++) {
-      const startLifePct = Math.random();
-      const currentLife = startLifePct * maxLife;
-      vars[i * 3] = currentLife;
-      vars[i * 3 + 1] = maxLife;
-      vars[i * 3 + 2] = Math.random() * Math.PI * 2;
-
-      const progress = 1.0 - (currentLife / maxLife);
-      pos[i * 3 + 1] = progress * maxLife;
-      
-      const radialDist = 0.08 * spreadVal * (sizeVal / 0.35) * (1.0 - progress * 0.35);
-      const spin = progress * 3.5 + vars[i * 3 + 2];
-      pos[i * 3] = Math.cos(spin) * radialDist;
-      pos[i * 3 + 2] = Math.sin(spin) * radialDist;
-
-      szs[i] = sizeVal * 0.22;
-      als[i] = 0.0;
-    }
-    return [pos, vars, cols, szs, als];
-  }, [type, embersCount, sizeVal, lifetimeVal, spreadVal]);
-
-  // Velocity buffers
-  const velocities = React.useRef<Float32Array | null>(null);
-  const embersVelocities = React.useRef<Float32Array | null>(null);
-
-  React.useMemo(() => {
+    const phs = new Float32Array(count);
     const vels = new Float32Array(count * 3);
+    const mlf = new Float32Array(count);
+    
     for (let i = 0; i < count; i++) {
+      phs[i] = Math.random() * lifetimeVal; // Start life offset
+      mlf[i] = lifetimeVal;
+      
       vels[i * 3] = (Math.random() - 0.5) * speedVal * 0.25;
       vels[i * 3 + 1] = speedVal * (1.2 + Math.random() * 0.8);
       vels[i * 3 + 2] = (Math.random() - 0.5) * speedVal * 0.25;
     }
-    velocities.current = vels;
-  }, [count, speedVal]);
+    return [pos, phs, vels, mlf];
+  }, [count, lifetimeVal, speedVal]);
 
-  React.useMemo(() => {
-    if (type !== 'fire') return;
+  const embersCount = Math.floor(sparksEmissionRate * 1.5);
+
+  const [ePositions, ePhases, eVelocities, eMaxLifes] = React.useMemo(() => {
+    if (type !== 'fire') return [new Float32Array(0), new Float32Array(0), new Float32Array(0), new Float32Array(0)];
+    const pos = new Float32Array(embersCount * 3);
+    const phs = new Float32Array(embersCount);
     const vels = new Float32Array(embersCount * 3);
+    const mlf = new Float32Array(embersCount);
+    
     for (let i = 0; i < embersCount; i++) {
+      phs[i] = Math.random() * (lifetimeVal * 0.8);
+      mlf[i] = lifetimeVal * 0.8;
+      
       vels[i * 3] = (Math.random() - 0.5) * speedVal * 0.5;
       vels[i * 3 + 1] = speedVal * (1.8 + Math.random() * 1.0);
       vels[i * 3 + 2] = (Math.random() - 0.5) * speedVal * 0.5;
     }
-    embersVelocities.current = vels;
-  }, [type, embersCount, speedVal]);
+    return [pos, phs, vels, mlf];
+  }, [type, embersCount, lifetimeVal, speedVal]);
 
+  const typeInt = type === 'fire' ? 0 : type === 'tornado' ? 1 : type === 'smoke' ? 2 : type === 'water' ? 3 : type === 'sparks' ? 4 : 5;
 
+  const uniforms = React.useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: tintColor },
+    uSize: { value: sizeVal },
+    uSpeed: { value: speedVal },
+    uSpread: { value: spreadVal },
+    uOpacity: { value: opacityVal },
+    uTexture: { value: activeTexture },
+    uHasTexture: { value: activeTexture !== null },
+    uType: { value: typeInt },
+    uIsPlaying: { value: isPlaying ? 1.0 : 0.0 }
+  }), [tintColor, sizeVal, speedVal, spreadVal, opacityVal, activeTexture, typeInt, isPlaying]);
 
-  const latestPropsRef = React.useRef({
-    isPlaying,
-    count,
-    speedVal,
-    sizeVal,
-    colorVal,
-    opacityVal,
-    shapeVal,
-    lifetimeVal,
-    emitSparks,
-    sparksBlendMode,
-    sparksEmissionRate,
-    applyPhysics,
-    spreadVal,
-    embersCount,
-    tintColor,
-  });
+  const embersUniforms = React.useMemo(() => ({
+    uTime: { value: 0 },
+    uColor: { value: tintColor },
+    uSize: { value: sizeVal * 0.22 },
+    uSpeed: { value: speedVal },
+    uSpread: { value: spreadVal },
+    uOpacity: { value: opacityVal * 0.9 },
+    uTexture: { value: sparkTexture },
+    uHasTexture: { value: true },
+    uType: { value: 6 }, // 6 = Embers
+    uIsPlaying: { value: isPlaying ? 1.0 : 0.0 }
+  }), [tintColor, sizeVal, speedVal, spreadVal, opacityVal, sparkTexture, isPlaying]);
 
-  latestPropsRef.current = {
-    isPlaying,
-    count,
-    speedVal,
-    sizeVal,
-    colorVal,
-    opacityVal,
-    shapeVal,
-    lifetimeVal,
-    emitSparks,
-    sparksBlendMode,
-    sparksEmissionRate,
-    applyPhysics,
-    spreadVal,
-    embersCount,
-    tintColor,
-  };
-
-  const arraysRef = React.useRef({
-    variables,
-    embersVariables,
-  });
-
-  arraysRef.current = {
-    variables,
-    embersVariables,
-  };
-
-  const emissionAccumulator = React.useRef(0.0);
-  const embersAccumulator = React.useRef(0.0);
-
-  useFrame((state, delta) => {
-    if (!posAttributeRef.current || !colAttributeRef.current || !sizeAttributeRef.current || !alphaAttributeRef.current || !pointsRef.current) return;
-    const isPaused = useStore.getState().isPaused;
-    if (isPaused) return;
-
-    // Retrieve up-to-date environment and particle attributes dynamically to prevent stale React closure bugs
-    const currentEnvironment = useStore.getState().environment;
-
-    const {
-      isPlaying: currentIsPlaying,
-      count: currentCount,
-      speedVal: currentSpeedVal,
-      sizeVal: currentSizeVal,
-      colorVal: currentColorVal,
-      opacityVal: currentOpacityVal,
-      shapeVal: currentShapeVal,
-      lifetimeVal: currentLifetimeVal,
-      emitSparks: currentEmitSparks,
-      sparksBlendMode: currentSparksBlendMode,
-      sparksEmissionRate: currentSparksEmissionRate,
-      applyPhysics: currentApplyPhysics,
-      spreadVal: currentSpreadVal,
-      embersCount: currentEmbersCount,
-      tintColor: currentTintColor,
-    } = latestPropsRef.current;
-
-    const {
-      variables: activeVariables,
-      embersVariables: activeEmbersVariables,
-    } = arraysRef.current;
-
-    const currentPos = posAttributeRef.current.array as Float32Array;
-    const currentCols = colAttributeRef.current.array as Float32Array;
-    const currentSizes = sizeAttributeRef.current.array as Float32Array;
-    const currentAlphas = alphaAttributeRef.current.array as Float32Array;
+  useFrame((state) => {
+    if (!isPlaying) return;
     const time = state.clock.getElapsedTime();
-
-    const maxHeight = currentLifetimeVal;
-
-    // 1. Spawning via Fractional Accumulator
-    if (currentIsPlaying) {
-      // Main flames spawning
-      const emissionRate = currentCount / currentLifetimeVal; // Rate to maintain active count
-      emissionAccumulator.current += emissionRate * delta;
-      let flameToSpawn = Math.floor(emissionAccumulator.current);
-      emissionAccumulator.current -= flameToSpawn;
-
-      for (let i = 0; i < currentCount && flameToSpawn > 0; i++) {
-        if (activeVariables[i * 3] <= 0.0) { // Found inactive or dead particle
-          const maxLife = currentLifetimeVal;
-          activeVariables[i * 3] = maxLife; // Remaining life
-          activeVariables[i * 3 + 1] = maxLife; // Max life
-          activeVariables[i * 3 + 2] = Math.random() * Math.PI * 2; // phase / seed
-
-          // Spawn close to base center
-          currentPos[i * 3] = (Math.random() - 0.5) * 0.28 * currentSpreadVal;
-          currentPos[i * 3 + 1] = 0.0;
-          currentPos[i * 3 + 2] = (Math.random() - 0.5) * 0.28 * currentSpreadVal;
-
-          // Initial velocity
-          if (velocities.current) {
-            velocities.current[i * 3] = (Math.random() - 0.5) * currentSpeedVal * 0.25;
-            velocities.current[i * 3 + 1] = currentSpeedVal * (1.2 + Math.random() * 0.8);
-            velocities.current[i * 3 + 2] = (Math.random() - 0.5) * currentSpeedVal * 0.25;
-          }
-
-          flameToSpawn--;
-        }
-      }
+    if (pointsRef.current) {
+      (pointsRef.current.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
     }
-
-    // 2. Physics & Convection Loop
-    // Wind Gusts & Turbulence calculation from "secret sauce" instructions
-    // Apply dynamic global environment wind if applyPhysics is true
-    let worldWindX = 0;
-    let worldWindZ = 0;
-    let worldTurbulence = 0.5;
-
-    if (currentApplyPhysics && currentEnvironment.windEnabled) {
-      const windRad = getWindAngle(currentEnvironment.windDirection);
-      const strength = currentEnvironment.windStrength || 2.0;
-      // Scale strength slightly so the flame simulation interacts elegantly without flying away completely
-      worldWindX = Math.cos(windRad) * strength * 0.4;
-      worldWindZ = Math.sin(windRad) * strength * 0.4;
-      worldTurbulence = currentEnvironment.windTurbulence || 0.5;
+    if (embersRef.current) {
+      (embersRef.current.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
     }
-
-    const baseWindX = worldWindX;
-    const baseWindZ = worldWindZ;
-    
-    // Incorporate wind turbulence gusts
-    const gust = 1.0 + Math.sin(time * 2.0) * worldTurbulence * 0.5;
-    
-    const hasWind = worldWindX !== 0 || worldWindZ !== 0;
-    const WindX = hasWind ? baseWindX * gust + Math.sin(time * 5.0) * 0.1 : 0;
-    const WindZ = hasWind ? baseWindZ * gust + Math.sin(time * 4.0) * 0.1 : 0;
-
-    for (let i = 0; i < currentCount; i++) {
-      const xIdx = i * 3;
-      const yIdx = i * 3 + 1;
-      const zIdx = i * 3 + 2;
-
-      let life = activeVariables[i * 3];
-
-      if (life > 0.0) {
-        if (currentIsPlaying) {
-          life -= delta;
-          activeVariables[i * 3] = life;
-        }
-
-        if (life <= 0.0) {
-          currentAlphas[i] = 0.0;
-          continue;
-        }
-
-        const maxLife = activeVariables[i * 3 + 1];
-        const progress = 1.0 - (life / maxLife);
-        const seed = activeVariables[i * 3 + 2];
-
-        if (currentIsPlaying && velocities.current) {
-          if (type === 'fire') {
-            // Cinema-grade convection shaping: flares outward at bottom, pulls inward in middle (necking), spreads outward at top
-            const neckFactor = progress < 0.15 ? 0.8 : (progress < 0.5 ? -3.0 : 1.2);
-            
-            // Lean the entire convection column axis with wind — aggressive offset so the 
-            // necking pull drives particles TOWARD the wind-shifted axis instead of fighting it
-            const driftedCenterX = WindX * progress * 6.5;
-            const driftedCenterZ = WindZ * progress * 6.5;
-
-            const convectionPullX = (currentPos[xIdx] - driftedCenterX) * neckFactor * (1.1 - progress);
-            const convectionPullZ = (currentPos[zIdx] - driftedCenterZ) * neckFactor * (1.1 - progress);
-            const convectionForceY = 3.2 * currentSpeedVal;
-
-            // Direct wind acceleration — scales with progress so base stays anchored, tips blow hard
-            const windPushX = WindX * (1.5 + progress * 4.5);
-            const windPushZ = WindZ * (1.5 + progress * 4.5);
-
-            velocities.current[xIdx] += (convectionPullX + windPushX) * delta;
-            velocities.current[yIdx] += convectionForceY * delta;
-            velocities.current[zIdx] += (convectionPullZ + windPushZ) * delta;
-
-            // Dampen horizontal velocity to prevent runaway drift
-            velocities.current[xIdx] *= 0.97;
-            velocities.current[zIdx] *= 0.97;
-
-            currentPos[xIdx] += velocities.current[xIdx] * delta;
-            currentPos[yIdx] += velocities.current[yIdx] * delta;
-            currentPos[zIdx] += velocities.current[zIdx] * delta;
-          } else if (type === 'tornado') {
-            const radius = (0.1 + progress * 2.2) * (currentSizeVal * 1.5);
-            const spinWinding = time * (currentSpeedVal * 6.0) + (progress * 10.0) + seed;
-            const wobbleX = Math.sin(time * 12 + seed) * 0.1 * progress;
-            const wobbleZ = Math.cos(time * 12 + seed) * 0.1 * progress;
-
-            currentPos[xIdx] = Math.cos(spinWinding) * radius + wobbleX;
-            currentPos[yIdx] = progress * maxHeight;
-            currentPos[zIdx] = Math.sin(spinWinding) * radius + wobbleZ;
-          } else if (type === 'sparks') {
-            currentPos[xIdx] += (Math.sin(time * 15 + seed) * 1.5 + WindX * progress * 0.8) * delta;
-            currentPos[yIdx] += velocities.current[yIdx] * delta;
-            currentPos[zIdx] += (Math.cos(time * 15 + seed) * 1.5 + WindZ * progress * 0.8) * delta;
-          } else if (type === 'water') {
-            currentPos[xIdx] += (Math.cos(time * 2 + seed) * 0.4 + WindX * 0.3) * delta;
-            currentPos[yIdx] += velocities.current[yIdx] * delta;
-            currentPos[zIdx] += (Math.sin(time * 2 + seed) * 0.4 + WindZ * 0.3) * delta;
-          } else {
-            currentPos[xIdx] += (Math.sin(time * 2 + seed) * 0.1 + WindX * 0.5) * delta;
-            currentPos[yIdx] += velocities.current[yIdx] * delta;
-            currentPos[zIdx] += (Math.cos(time * 2 + seed) * 0.1 + WindZ * 0.5) * delta;
-          }
-        }
-
-        // Apply dynamic color over time
-        let r = 1.0, g = 1.0, b = 1.0;
-        if (type === 'fire') {
-          if (progress < 0.15) {
-            const t = progress / 0.15;
-            r = THREE.MathUtils.lerp(3.0, 2.0, t);
-            g = THREE.MathUtils.lerp(2.8, 1.4, t);
-            b = THREE.MathUtils.lerp(2.5, 0.2, t);
-          } else if (progress < 0.65) {
-            const t = (progress - 0.15) / 0.50;
-            r = THREE.MathUtils.lerp(2.0, 1.6, t);
-            g = THREE.MathUtils.lerp(1.4, 0.35, t);
-            b = THREE.MathUtils.lerp(0.2, 0.0, t);
-          } else if (progress < 0.85) {
-            const t = (progress - 0.65) / 0.20;
-            r = THREE.MathUtils.lerp(1.6, 0.7, t);
-            g = THREE.MathUtils.lerp(0.35, 0.05, t);
-            b = THREE.MathUtils.lerp(0.0, 0.05, t);
-          } else {
-            const t = (progress - 0.85) / 0.15;
-            r = THREE.MathUtils.lerp(0.7, 0.1, t);
-            g = THREE.MathUtils.lerp(0.05, 0.1, t);
-            b = THREE.MathUtils.lerp(0.05, 0.1, t);
-          }
-        } else if (type === 'tornado') {
-          if (progress < 0.25) {
-            r = 1.0; g = 0.65; b = 0.35;
-          } else if (progress < 0.7) {
-            const t = (progress - 0.25) / 0.45;
-            r = THREE.MathUtils.lerp(1.0, 0.45, t); g = THREE.MathUtils.lerp(0.65, 0.4, t); b = THREE.MathUtils.lerp(0.35, 0.35, t);
-          } else {
-            const t = (progress - 0.7) / 0.3;
-            r = THREE.MathUtils.lerp(0.45, 0.2, t); g = THREE.MathUtils.lerp(0.4, 0.2, t); b = THREE.MathUtils.lerp(0.35, 0.25, t);
-          }
-        } else if (type === 'sparks') {
-          r = 1.0; g = THREE.MathUtils.lerp(0.8, 0.1, progress); b = THREE.MathUtils.lerp(0.2, 0.0, progress);
-        } else if (type === 'water') {
-          r = 0.2; g = THREE.MathUtils.lerp(0.6, 0.8, progress); b = 1.0;
-        } else {
-          r = g = b = THREE.MathUtils.lerp(0.4, 0.2, progress);
-        }
-
-        currentCols[xIdx] = r * currentTintColor.r;
-        currentCols[yIdx] = g * currentTintColor.g;
-        currentCols[zIdx] = b * currentTintColor.b;
-
-        // Dynamic Sizing
-        if (type === 'fire') {
-          currentSizes[i] = currentSizeVal * (1.1 - progress * 0.45);
-        } else if (type === 'tornado') {
-          currentSizes[i] = currentSizeVal * (1.0 + progress * 0.5);
-        } else if (type === 'sparks') {
-          currentSizes[i] = currentSizeVal * (1.0 - progress);
-        } else if (type === 'water') {
-          currentSizes[i] = currentSizeVal * (1.0 - progress * 0.7);
-        } else {
-          currentSizes[i] = currentSizeVal * (0.6 + progress * 1.0);
-        }
-
-        // Dynamic Opacity Curve
-        let opacityCoeff = 1.0;
-        if (progress < 0.1) {
-          opacityCoeff = progress / 0.1;
-        } else if (progress > 0.5) {
-          opacityCoeff = 1.0 - (progress - 0.5) / 0.5;
-        }
-        currentAlphas[i] = THREE.MathUtils.clamp(opacityCoeff, 0.0, 1.0);
-      } else {
-        currentAlphas[i] = 0.0;
-      }
-    }
-
-    // 3. EMBERS & SPARKS DRAFT (Only for fire)
-    if (type === 'fire' && currentEmitSparks && embersPosRef.current && embersColRef.current && embersSizeRef.current && embersAlphaRef.current) {
-      const ePos = embersPosRef.current.array as Float32Array;
-      const eCols = embersColRef.current.array as Float32Array;
-      const eSizes = embersSizeRef.current.array as Float32Array;
-      const eAlphas = embersAlphaRef.current.array as Float32Array;
-
-      // Spawning via Fractional Accumulator
-      if (currentIsPlaying) {
-        const embersRate = currentEmbersCount / (currentLifetimeVal * 0.8);
-        embersAccumulator.current += embersRate * delta;
-        let embersToSpawn = Math.floor(embersAccumulator.current);
-        embersAccumulator.current -= embersToSpawn;
-
-        for (let i = 0; i < currentEmbersCount && embersToSpawn > 0; i++) {
-          if (activeEmbersVariables[i * 3] <= 0.0) {
-            const maxLife = currentLifetimeVal * 0.8;
-            activeEmbersVariables[i * 3] = maxLife;
-            activeEmbersVariables[i * 3 + 1] = maxLife;
-            activeEmbersVariables[i * 3 + 2] = Math.random() * Math.PI * 2;
-
-            ePos[i * 3] = (Math.random() - 0.5) * 0.25 * currentSpreadVal;
-            ePos[i * 3 + 1] = Math.random() * 0.5;
-            ePos[i * 3 + 2] = (Math.random() - 0.5) * 0.25 * currentSpreadVal;
-
-            if (embersVelocities.current) {
-              embersVelocities.current[i * 3] = (Math.random() - 0.5) * currentSpeedVal * 0.5;
-              embersVelocities.current[i * 3 + 1] = currentSpeedVal * (1.8 + Math.random() * 1.0);
-              embersVelocities.current[i * 3 + 2] = (Math.random() - 0.5) * currentSpeedVal * 0.5;
-            }
-
-            embersToSpawn--;
-          }
-        }
-      }
-
-      // Update simulation loop
-      for (let i = 0; i < currentEmbersCount; i++) {
-        const xIdx = i * 3;
-        const yIdx = i * 3 + 1;
-        const zIdx = i * 3 + 2;
-
-        let life = activeEmbersVariables[i * 3];
-
-        if (life > 0.0) {
-          if (currentIsPlaying) {
-            life -= delta;
-            activeEmbersVariables[i * 3] = life;
-          }
-
-          if (life <= 0.0) {
-            eAlphas[i] = 0.0;
-            continue;
-          }
-
-          const maxLife = activeEmbersVariables[i * 3 + 1];
-          const progress = 1.0 - (life / maxLife);
-          const seed = activeEmbersVariables[i * 3 + 2];
-
-          if (currentIsPlaying && embersVelocities.current) {
-            // Erratic high-frequency swirl
-            embersVelocities.current[xIdx] += Math.sin(time * 12.0 + seed) * 1.5 * delta;
-            embersVelocities.current[zIdx] += Math.cos(time * 12.0 + seed) * 1.5 * delta;
-
-            // Wind force on embers — lightweight sparks get blown harder than flames
-            embersVelocities.current[xIdx] += WindX * (2.5 + progress * 6.0) * delta;
-            embersVelocities.current[zIdx] += WindZ * (2.5 + progress * 6.0) * delta;
-
-            // Dampen to prevent runaway
-            embersVelocities.current[xIdx] *= 0.96;
-            embersVelocities.current[zIdx] *= 0.96;
-
-            // Upward climb
-            ePos[xIdx] += embersVelocities.current[xIdx] * delta;
-            ePos[yIdx] += embersVelocities.current[yIdx] * delta;
-            ePos[zIdx] += embersVelocities.current[zIdx] * delta;
-          }
-
-          // Sparks start hot white/gold, turn red-orange, and fade
-          if (progress < 0.2) {
-            eCols[xIdx] = 1.2;
-            eCols[yIdx] = 1.0;
-            eCols[zIdx] = 0.6;
-          } else if (progress < 0.7) {
-            eCols[xIdx] = 1.0;
-            eCols[yIdx] = 0.45;
-            eCols[zIdx] = 0.05;
-          } else {
-            const fade = Math.max(0.0, 1.0 - (progress - 0.7) / 0.3);
-            eCols[xIdx] = 0.9 * fade;
-            eCols[yIdx] = 0.1 * fade;
-            eCols[zIdx] = 0.0;
-          }
-
-          eSizes[i] = currentSizeVal * 0.22 * (1.0 - progress * 0.5);
-
-          // Fade out near end of life
-          let opacityCoeff = 1.0;
-          if (progress > 0.7) {
-            opacityCoeff = 1.0 - (progress - 0.7) / 0.3;
-          }
-          eAlphas[i] = THREE.MathUtils.clamp(opacityCoeff, 0.0, 1.0);
-        } else {
-          eAlphas[i] = 0.0;
-        }
-      }
-      embersPosRef.current.needsUpdate = true;
-      embersColRef.current.needsUpdate = true;
-      embersSizeRef.current.needsUpdate = true;
-      embersAlphaRef.current.needsUpdate = true;
-    }
-
-
-
-    posAttributeRef.current.needsUpdate = true;
-    colAttributeRef.current.needsUpdate = true;
-    sizeAttributeRef.current.needsUpdate = true;
-    alphaAttributeRef.current.needsUpdate = true;
   });
 
-  // Material & Shader setup
   const effectStyles = React.useMemo(() => {
     switch (type) {
-      case 'fire': return { opacity: opacityVal, blending: THREE.AdditiveBlending };
-      case 'tornado': return { opacity: opacityVal, blending: THREE.NormalBlending };
-      case 'smoke': return { opacity: opacityVal, blending: THREE.NormalBlending };
-      case 'water': return { opacity: opacityVal, blending: THREE.NormalBlending };
-      case 'sparks': return { opacity: opacityVal, blending: THREE.AdditiveBlending };
-      default: return { opacity: opacityVal, blending: THREE.NormalBlending };
+      case 'fire': return { blending: THREE.AdditiveBlending };
+      case 'tornado': return { blending: THREE.NormalBlending };
+      case 'smoke': return { blending: THREE.NormalBlending };
+      case 'water': return { blending: THREE.NormalBlending };
+      case 'sparks': return { blending: THREE.AdditiveBlending };
+      default: return { blending: THREE.NormalBlending };
     }
-  }, [type, opacityVal]);
+  }, [type]);
 
   const vertexShader = React.useMemo(() => `
-    attribute float aSize;
-    attribute float aAlpha;
-    varying vec3 vColor;
-    varying float vAlpha;
+    uniform float uTime;
+    uniform float uSize;
+    uniform int uType;
+    uniform float uSpeed;
+    uniform float uSpread;
+    uniform float uIsPlaying;
+
+    attribute float aPhase;
+    attribute float aMaxLife;
+    attribute vec3 aVelocity;
+
+    varying float vLifeProgress;
+    varying float vPhase;
+
     void main() {
-      vColor = color;
-      vAlpha = aAlpha;
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      float simulatedTime = uIsPlaying > 0.5 ? uTime : 0.0;
+      float life = mod(simulatedTime * uSpeed + aPhase, aMaxLife);
+      float progress = life / aMaxLife;
+      vLifeProgress = progress;
+      vPhase = aPhase;
+
+      vec3 pos = position;
+
+      if (uType == 0) { // Fire
+        float height = progress * aMaxLife;
+        pos.y += height;
+
+        float rCoeff = abs(sin(aPhase * 14.3));
+        float neckFactor = progress < 0.15 ? 1.0 : (progress < 0.5 ? 0.35 : 0.9);
+        float baseRadius = 0.28 * uSpread * neckFactor * (1.1 - progress * 0.4) * rCoeff;
+        
+        pos.x += cos(aPhase) * baseRadius;
+        pos.z += sin(aPhase) * baseRadius;
+      } 
+      else if (uType == 6) { // Embers
+        pos.y += progress * aMaxLife;
+        float radialDist = 0.08 * uSpread * (1.0 - progress * 0.35);
+        float spin = progress * 3.5 + aPhase;
+        pos.x += cos(spin) * radialDist;
+        pos.z += sin(spin) * radialDist;
+        
+        pos.x += aVelocity.x * life;
+        pos.y += aVelocity.y * life * 0.5;
+        pos.z += aVelocity.z * life;
+      }
+      else {
+        pos.x += aVelocity.x * life;
+        pos.y += aVelocity.y * life;
+        pos.z += aVelocity.z * life;
+      }
+
+      vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+      
+      float sizeMultiplier = 1.0;
+      if (uType == 0) sizeMultiplier = (1.1 - progress * 0.45);
+      else if (uType == 1) sizeMultiplier = (1.0 + progress * 0.5);
+      else if (uType == 6) sizeMultiplier = (1.0 - progress * 0.5);
+      else sizeMultiplier = (0.6 + progress * 1.0);
+
+      gl_PointSize = uSize * sizeMultiplier * (300.0 / -mvPosition.z);
       gl_Position = projectionMatrix * mvPosition;
-      gl_PointSize = aSize * (300.0 / -mvPosition.z);
     }
   `, []);
 
   const fragmentShader = React.useMemo(() => `
-    uniform sampler2D pointTexture;
+    uniform vec3 uColor;
     uniform float uOpacity;
+    uniform sampler2D uTexture;
     uniform bool uHasTexture;
-    varying vec3 vColor;
-    varying float vAlpha;
+    uniform int uType;
+
+    varying float vLifeProgress;
+    varying float vPhase;
+
     void main() {
-      float alphaVal = vAlpha * uOpacity;
+      float alpha = 1.0;
+      if (vLifeProgress < 0.1) alpha = vLifeProgress / 0.1;
+      else if (vLifeProgress > 0.5) alpha = 1.0 - (vLifeProgress - 0.5) / 0.5;
+
+      alpha = clamp(alpha, 0.0, 1.0) * uOpacity;
+
+      vec3 finalColor = uColor;
+
+      if (uType == 0) { // Fire
+        if (vLifeProgress < 0.15) {
+          float t = vLifeProgress / 0.15;
+          finalColor = mix(vec3(3.0, 2.8, 2.5), vec3(2.0, 1.4, 0.2), t) * uColor;
+        } else if (vLifeProgress < 0.65) {
+          float t = (vLifeProgress - 0.15) / 0.5;
+          finalColor = mix(vec3(2.0, 1.4, 0.2), vec3(1.6, 0.35, 0.0), t) * uColor;
+        } else {
+          float t = (vLifeProgress - 0.65) / 0.35;
+          finalColor = mix(vec3(1.6, 0.35, 0.0), vec3(0.1, 0.1, 0.1), t) * uColor;
+        }
+      } 
+      else if (uType == 6) { // Embers
+        if (vLifeProgress < 0.2) {
+          finalColor = vec3(1.2, 1.0, 0.6);
+        } else if (vLifeProgress < 0.7) {
+          finalColor = vec3(1.0, 0.45, 0.05);
+        } else {
+          float fade = max(0.0, 1.0 - (vLifeProgress - 0.7) / 0.3);
+          finalColor = vec3(0.9 * fade, 0.1 * fade, 0.0);
+        }
+      }
+
       if (uHasTexture) {
-        vec4 tex = texture2D(pointTexture, gl_PointCoord);
-        if (tex.a < 0.01) discard;
-        gl_FragColor = vec4(vColor, alphaVal * tex.a);
+        vec4 texColor = texture2D(uTexture, gl_PointCoord);
+        if (texColor.a < 0.01) discard;
+        gl_FragColor = vec4(finalColor, alpha * texColor.a);
       } else {
         vec2 uv = gl_PointCoord - vec2(0.5);
         float dist = length(uv);
         if (dist > 0.5) discard;
-        float alpha = (0.5 - dist) * 2.0;
-        gl_FragColor = vec4(vColor, alphaVal * alpha);
+        float circleAlpha = (0.5 - dist) * 2.0;
+        gl_FragColor = vec4(finalColor, alpha * circleAlpha);
       }
     }
   `, []);
-
-  const uniforms = React.useMemo(() => ({
-    pointTexture: { value: activeTexture },
-    uOpacity: { value: effectStyles.opacity },
-    uHasTexture: { value: activeTexture !== null }
-  }), [activeTexture, effectStyles.opacity]);
-
-  const embersUniforms = React.useMemo(() => ({
-    pointTexture: { value: sparkTexture },
-    uOpacity: { value: opacityVal * 0.9 },
-    uHasTexture: { value: true }
-  }), [sparkTexture, opacityVal]);
 
   return (
     <>
       <points ref={pointsRef}>
         <bufferGeometry>
-          <bufferAttribute
-            ref={posAttributeRef}
-            attach="attributes-position"
-            args={[positions, 3]}
-          />
-          <bufferAttribute
-            ref={colAttributeRef}
-            attach="attributes-color"
-            args={[colors, 3]}
-          />
-          <bufferAttribute
-            ref={sizeAttributeRef}
-            attach="attributes-aSize"
-            args={[sizes, 1]}
-          />
-          <bufferAttribute
-            ref={alphaAttributeRef}
-            attach="attributes-aAlpha"
-            args={[alphas, 1]}
-          />
+          <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+          <bufferAttribute attach="attributes-aPhase" args={[phases, 1]} />
+          <bufferAttribute attach="attributes-aMaxLife" args={[maxLifes, 1]} />
+          <bufferAttribute attach="attributes-aVelocity" args={[velocities, 3]} />
         </bufferGeometry>
         <shaderMaterial
-          vertexColors={true}
           uniforms={uniforms}
           vertexShader={vertexShader}
           fragmentShader={fragmentShader}
@@ -4449,33 +4656,15 @@ function ParticleEmitter({ type, isPlaying, particleProps }: { type: string; isP
           blending={effectStyles.blending}
         />
       </points>
-
       {type === 'fire' && emitSparks && (
         <points ref={embersRef}>
           <bufferGeometry>
-            <bufferAttribute
-              ref={embersPosRef}
-              attach="attributes-position"
-              args={[embersPositions, 3]}
-            />
-            <bufferAttribute
-              ref={embersColRef}
-              attach="attributes-color"
-              args={[embersColors, 3]}
-            />
-            <bufferAttribute
-              ref={embersSizeRef}
-              attach="attributes-aSize"
-              args={[embersSizes, 1]}
-            />
-            <bufferAttribute
-              ref={embersAlphaRef}
-              attach="attributes-aAlpha"
-              args={[embersAlphas, 1]}
-            />
+            <bufferAttribute attach="attributes-position" args={[ePositions, 3]} />
+            <bufferAttribute attach="attributes-aPhase" args={[ePhases, 1]} />
+            <bufferAttribute attach="attributes-aMaxLife" args={[eMaxLifes, 1]} />
+            <bufferAttribute attach="attributes-aVelocity" args={[eVelocities, 3]} />
           </bufferGeometry>
           <shaderMaterial
-            vertexColors={true}
             uniforms={embersUniforms}
             vertexShader={vertexShader}
             fragmentShader={fragmentShader}
@@ -4489,75 +4678,145 @@ function ParticleEmitter({ type, isPlaying, particleProps }: { type: string; isP
   );
 }
 
-function FoliageGroup({ url, instances }: { url: string; instances: FoliageInstanceData[] }) {
-  const { scene } = useGLTF(url);
-  const meshRefs = useRef<THREE.InstancedMesh[]>([]);
+interface FoliageSubMesh {
+  geometry: THREE.BufferGeometry;
+  material: THREE.Material;
+  localMatrix: THREE.Matrix4;
+  baseColorHex?: string;
+  enableWindSway?: boolean;
+}
 
-  const meshes = useMemo(() => {
-    const arr: THREE.Mesh[] = [];
-    scene.traverse((child) => {
-      if ((child as THREE.Mesh).isMesh) {
-        arr.push(child as THREE.Mesh);
+function InstancedSubMeshRenderer({
+  subMeshes,
+  instances,
+}: {
+  subMeshes: FoliageSubMesh[];
+  instances: FoliageInstanceData[];
+}) {
+  const meshRefs = useRef<THREE.InstancedMesh[]>([]);
+  const capacity = useMemo(() => computeInstancedCapacity(instances.length), [instances.length]);
+
+  // Synchronize wind time in useFrame
+  useFrame((state) => {
+    const time = state.clock.getElapsedTime();
+    subMeshes.forEach((part) => {
+      const uniforms = (part.material as any).windUniforms;
+      if (uniforms && uniforms.uWindTime) {
+        uniforms.uWindTime.value = time;
       }
     });
-    return arr;
-  }, [scene]);
-
-  const dummy = useMemo(() => new THREE.Object3D(), []);
+  });
 
   useEffect(() => {
-    if (!meshRefs.current.length) return;
+    if (!subMeshes.length) return;
 
-    meshes.forEach((_, idx) => {
-      const instancedMesh = meshRefs.current[idx];
-      if (instancedMesh) {
-        instances.forEach((inst, i) => {
-          dummy.position.set(...inst.position);
-          dummy.rotation.set(...inst.rotation);
-          dummy.scale.set(...inst.scale);
-          dummy.updateMatrix();
-          instancedMesh.setMatrixAt(i, dummy.matrix);
-        });
-        instancedMesh.instanceMatrix.needsUpdate = true;
-        instancedMesh.count = instances.length;
+    subMeshes.forEach((part, meshIdx) => {
+      const instancedMesh = meshRefs.current[meshIdx];
+      if (!instancedMesh) return;
+
+      const boundingSphere = writeInstanceTransforms(
+        instancedMesh,
+        instances,
+        part.localMatrix,
+        part.baseColorHex
+      );
+
+      // Frustum culling bounding sphere per cluster
+      if (instances.length > 0) {
+        instancedMesh.geometry.boundingSphere = boundingSphere;
       }
     });
-  }, [instances, meshes, dummy]);
+  }, [instances, subMeshes, capacity]);
 
   return (
     <group>
-      {meshes.map((m, i) => (
+      {subMeshes.map((part, i) => (
         <instancedMesh
-          key={m.uuid}
+          key={`${part.geometry.id}_${capacity}`}
           ref={(el) => {
             if (el) meshRefs.current[i] = el;
           }}
-          args={[m.geometry, m.material, 5000]}
+          args={[part.geometry, part.material, capacity]}
           castShadow
           receiveShadow
+          frustumCulled={true}
         />
       ))}
     </group>
   );
 }
 
+function GltfFoliageGroup({ url, instances }: { url: string; instances: FoliageInstanceData[] }) {
+  const { scene } = useGLTF(url);
+
+  // Extract all sub-meshes with their exact local matrix relative to GLTF scene root
+  const subMeshes = useMemo(() => {
+    scene.updateMatrixWorld(true);
+    const rootInverse = scene.matrixWorld.clone().invert();
+    const arr: FoliageSubMesh[] = [];
+
+    scene.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        const localMatrix = mesh.matrixWorld.clone().premultiply(rootInverse);
+
+        let mat = mesh.material;
+        if (Array.isArray(mat)) mat = mat[0];
+        const clonedMat = mat ? mat.clone() : new THREE.MeshStandardMaterial({ color: '#2e7d32' });
+        applyWindSwayShader(clonedMat, 0.8);
+
+        arr.push({
+          geometry: mesh.geometry,
+          material: clonedMat,
+          localMatrix,
+          baseColorHex: (clonedMat as any).color ? `#${(clonedMat as any).color.getHexString()}` : '#4ade80',
+          enableWindSway: true,
+        });
+      }
+    });
+    return arr;
+  }, [scene]);
+
+  return <InstancedSubMeshRenderer subMeshes={subMeshes} instances={instances} />;
+}
+
+function ProceduralFoliageGroup({ presetId, instances }: { presetId: string; instances: FoliageInstanceData[] }) {
+  const subMeshes = useMemo(() => {
+    const parts = getProceduralFoliageParts(presetId);
+    return parts || [];
+  }, [presetId]);
+
+  return <InstancedSubMeshRenderer subMeshes={subMeshes} instances={instances} />;
+}
+
 function FoliageRenderer() {
   const instances = useStore((state) => state.foliageInstances);
 
-  const groups = useMemo(() => {
-    const map = new Map<string, FoliageInstanceData[]>();
-    instances.forEach((inst) => {
-      if (!map.has(inst.assetUrl)) map.set(inst.assetUrl, []);
-      map.get(inst.assetUrl)!.push(inst);
-    });
-    return Array.from(map.entries());
+  // Group instances into spatial clusters (32m x 32m) per asset URL
+  const clusters = useMemo(() => {
+    return clusterFoliageInstances(instances);
   }, [instances]);
 
   return (
     <>
-      {groups.map(([url, groupInstances]) => (
-        <FoliageGroup key={url} url={url} instances={groupInstances} />
-      ))}
+      {clusters.map((cluster) => {
+        if (cluster.assetUrl.startsWith('procedural:')) {
+          return (
+            <ProceduralFoliageGroup
+              key={cluster.chunkKey}
+              presetId={cluster.assetUrl}
+              instances={cluster.instances}
+            />
+          );
+        }
+        return (
+          <ModelErrorBoundary key={cluster.chunkKey}>
+            <Suspense fallback={null}>
+              <GltfFoliageGroup url={cluster.assetUrl} instances={cluster.instances} />
+            </Suspense>
+          </ModelErrorBoundary>
+        );
+      })}
     </>
   );
 }
@@ -4568,7 +4827,7 @@ function FoliagePainterController() {
   const brushAssetUrl = useStore((s) => s.foliageBrushAssetId);
   const brushRadius = useStore((s) => s.foliageBrushRadius);
   const brushDensity = useStore((s) => s.foliageBrushDensity);
-  const addFoliageInstance = useStore((s) => s.addFoliageInstance);
+  const addFoliageInstances = useStore((s) => s.addFoliageInstances);
   const eraseFoliageInRadius = useStore((s) => s.eraseFoliageInRadius);
 
   const [isPainting, setIsPainting] = useState(false);
@@ -4592,7 +4851,7 @@ function FoliagePainterController() {
   }, []);
 
   const paint = useCallback(() => {
-    if (!brushAssetUrl) return;
+    const targetAssetUrl = brushAssetUrl || 'procedural:grass';
 
     const exportScene = scene.getObjectByName('export_scene');
     if (!exportScene) return;
@@ -4608,6 +4867,7 @@ function FoliagePainterController() {
         eraseFoliageInRadius([point.x, point.y, point.z], brushRadius, brushAssetUrl);
       } else {
         const countToSpawn = Math.max(1, Math.floor(brushDensity / 3));
+        const newInstances: FoliageInstanceData[] = [];
         
         for (let i = 0; i < countToSpawn; i++) {
           const angle = Math.random() * Math.PI * 2;
@@ -4625,18 +4885,22 @@ function FoliagePainterController() {
             const rotZ = (Math.random() - 0.5) * 0.1;
             const baseScale = 0.7 + Math.random() * 0.5;
 
-            addFoliageInstance({
+            newInstances.push({
               id: `fol_${crypto.randomUUID()}`,
-              assetUrl: brushAssetUrl,
+              assetUrl: targetAssetUrl,
               position: [snapHit.point.x, snapHit.point.y, snapHit.point.z],
               rotation: [rotX, rotY, rotZ],
               scale: [baseScale, baseScale, baseScale],
             });
           }
         }
+
+        if (newInstances.length > 0) {
+          addFoliageInstances(newInstances);
+        }
       }
     }
-  }, [brushAssetUrl, brushRadius, brushDensity, camera, raycaster, scene, addFoliageInstance, eraseFoliageInRadius]);
+  }, [brushAssetUrl, brushRadius, brushDensity, camera, raycaster, scene, addFoliageInstances, eraseFoliageInRadius]);
 
   useFrame(() => {
     if (activeTool !== 'foliage') return;

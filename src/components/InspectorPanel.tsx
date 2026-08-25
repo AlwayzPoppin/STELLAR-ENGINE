@@ -28,9 +28,31 @@ import {
   Search,
   X,
   Folder,
+  Sparkles,
+  Cloud,
+  CloudRain,
+  Calendar,
+  Gamepad2,
+  Crosshair,
+  Camera,
+  Shield,
+  Volume2,
+  VolumeX,
+  Radio,
+  Music,
 } from 'lucide-react';
 import { ScrubbableInput } from './ScrubbableInput';
 import { AssetThumbnailPlaceholder } from './AssetCard';
+import { toast } from '../store/useToastStore';
+import { PROCEDURAL_FOLIAGE_PRESETS } from '../utils/FoliageGeometryLibrary';
+
+export const SUN_LENS_FLARES = [
+  { name: 'Classic Clearcut Flare', url: '/Lens_flares_001-clearcut.png' },
+  { name: 'Radiant Sunburst Flare', url: '/lens_flare.png' },
+  { name: 'Atmospheric Sun Ray', url: '/SUN RAY.png' },
+];
+
+export const PUBLIC_LENS_FLARES = [...SUN_LENS_FLARES];
 
 const Section = ({ title, icon: Icon, colorClass = 'text-text-secondary', defaultExpanded = true, children }: any) => {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -67,6 +89,7 @@ const Section = ({ title, icon: Icon, colorClass = 'text-text-secondary', defaul
 };
 
 export default function InspectorPanel() {
+  const [massUnit, setMassUnit] = useState<'kg' | 'lbs'>('kg');
   const {
     objects,
     selectedIds,
@@ -95,6 +118,19 @@ export default function InspectorPanel() {
     activePickerTarget,
     setActivePickerTarget,
   } = useStore();
+
+  const lensFlareLayers = environment.lensFlareLayers || [
+    {
+      id: 'layer-1',
+      name: 'Classic Flare Layer',
+      enabled: true,
+      textureUrl: '/Lens_flares_001-clearcut.png',
+      offsetX: -0.06,
+      offsetY: 0.05,
+      scale: 3600,
+      opacity: 1.0,
+    },
+  ];
 
   const [isReplacingMesh, setIsReplacingMesh] = useState(false);
   const [meshSearch, setMeshSearch] = useState('');
@@ -131,23 +167,57 @@ export default function InspectorPanel() {
 
         <div className="p-3 space-y-4">
           <Section title="Brush Type" icon={Box} colorClass="text-sky-400">
-            <div className="space-y-2 w-full">
-              <span className="text-[11px] text-text-secondary block">Select Foliage Asset</span>
-              <div className="grid grid-cols-2 gap-2">
-                {foliageModels.map((m) => {
-                  const isSelected = foliageBrushAssetId === m.url;
-                  return (
-                    <button
-                      key={m.id}
-                      onClick={() => setFoliageBrushAssetId(m.url || null)}
-                      className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all text-center cursor-pointer min-w-0 ${isSelected ? 'border-accent bg-accent/10 text-text-primary font-semibold' : 'border-border bg-bg-deep/50 text-text-secondary hover:border-text-secondary hover:text-text-primary'}`}
-                    >
-                      <Box size={20} className="mb-1" />
-                      <span className="text-[10px] font-medium truncate w-full block">{m.name}</span>
-                    </button>
-                  );
-                })}
+            <div className="space-y-3 w-full">
+              <div>
+                <span className="text-[11px] text-text-secondary block mb-1.5 font-medium">Procedural Presets</span>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {PROCEDURAL_FOLIAGE_PRESETS.map((preset) => {
+                    const isSelected = (foliageBrushAssetId || 'procedural:grass') === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        onClick={() => setFoliageBrushAssetId(preset.id)}
+                        className={`flex items-center gap-2 p-2 rounded-lg border transition-all text-left cursor-pointer min-w-0 ${
+                          isSelected
+                            ? 'border-accent bg-accent/15 text-text-primary font-semibold shadow-sm'
+                            : 'border-border bg-bg-deep/50 text-text-secondary hover:border-text-secondary hover:text-text-primary'
+                        }`}
+                      >
+                        <div
+                          className="w-3.5 h-3.5 rounded-full shrink-0 shadow-inner"
+                          style={{ backgroundColor: preset.thumbnailColor }}
+                        />
+                        <span className="text-[10px] truncate">{preset.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
+
+              {foliageModels.length > 0 && (
+                <div>
+                  <span className="text-[11px] text-text-secondary block mb-1.5 font-medium">Custom 3D Models</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {foliageModels.map((m) => {
+                      const isSelected = foliageBrushAssetId === m.url;
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => setFoliageBrushAssetId(m.url || null)}
+                          className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all text-center cursor-pointer min-w-0 ${
+                            isSelected
+                              ? 'border-accent bg-accent/15 text-text-primary font-semibold shadow-sm'
+                              : 'border-border bg-bg-deep/50 text-text-secondary hover:border-text-secondary hover:text-text-primary'
+                          }`}
+                        >
+                          <Box size={16} className="mb-1 text-sky-400" />
+                          <span className="text-[10px] font-medium truncate w-full block">{m.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </Section>
 
@@ -233,9 +303,219 @@ export default function InspectorPanel() {
   }
 
   const selectedId = selectedIds[0] || null;
-  const selectedObj = objects.find((o) => o.id === selectedId);
+  const selectedObj = objects.find((o) => o.id === selectedId) || (
+    selectedId === 'sun-light'
+      ? ({
+          id: 'sun-light',
+          name: 'Sun (Directional Light)',
+          type: 'SUN',
+          position: [100, 100, 100],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          textureUrl: null,
+          parentId: 'lighting',
+        } as any)
+      : selectedId === 'moon-light'
+      ? ({
+          id: 'moon-light',
+          name: 'Moon (Directional Light)',
+          type: 'MOON',
+          position: [-100, -100, -100],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          textureUrl: null,
+          parentId: 'lighting',
+        } as any)
+      : null
+  );
+
+  if (selectedId === 'gameplay_settings') {
+    const gs = useStore.getState().gameplaySettings || {
+      showCrosshair: true,
+      crosshairStyle: 'classic',
+      crosshairColor: '#ffffff',
+      enableVoxelMining: true,
+      enableVoxelPlacing: true,
+      miningRange: 8.0,
+      placeCooldownMs: 150,
+      cameraMode: 'third_person',
+      fov: 75,
+      pvpDamage: true,
+      fallDamage: false,
+      respawnTime: 3,
+    };
+    const updateGS = useStore.getState().updateGameplaySettings;
+
+    return (
+      <div role="region" aria-label="Gameplay Settings Inspector" className="flex flex-col h-full select-none bg-bg-surface/80 backdrop-blur-md">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-neutral-900/50">
+          <div className="flex items-center gap-2">
+            <Gamepad2 size={14} className="text-emerald-400" />
+            <span className="text-[11px] font-bold tracking-wider uppercase text-neutral-300">Gameplay Settings</span>
+          </div>
+          <button
+            onClick={toggleInspector}
+            className="p-1 hover:bg-neutral-800 rounded-md text-neutral-500 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+            title="Collapse Panel"
+          >
+            <ChevronRight size={14} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-3">
+          {/* HUD & UI Settings */}
+          <Section title="HUD & Reticle UI" icon={Crosshair} colorClass="text-cyan-400">
+            <div className="space-y-3 p-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-neutral-300">Show Crosshair HUD</span>
+                <input
+                  type="checkbox"
+                  checked={gs.showCrosshair}
+                  onChange={(e) => updateGS({ showCrosshair: e.target.checked })}
+                  className="rounded border-neutral-800 bg-neutral-900 text-emerald-500 focus:ring-0 cursor-pointer"
+                />
+              </div>
+
+              {gs.showCrosshair && (
+                <>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-neutral-400">Crosshair Style</span>
+                    <select
+                      value={gs.crosshairStyle}
+                      onChange={(e) => updateGS({ crosshairStyle: e.target.value as any })}
+                      className="bg-neutral-900 border border-neutral-800 rounded text-xs text-white px-2 py-1"
+                    >
+                      <option value="classic">Classic Cross</option>
+                      <option value="dot">Target Dot</option>
+                      <option value="circle">Ring Circle</option>
+                      <option value="dynamic">Dynamic Reticle</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-neutral-400">Crosshair Color</span>
+                    <input
+                      type="color"
+                      value={gs.crosshairColor}
+                      onChange={(e) => updateGS({ crosshairColor: e.target.value })}
+                      className="w-7 h-7 rounded border border-white/20 bg-transparent p-0 cursor-pointer"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </Section>
+
+          {/* Camera & World Rules */}
+          <Section title="Camera & Rules" icon={Camera} colorClass="text-indigo-400">
+            <div className="space-y-3 p-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-neutral-400">Camera View Mode</span>
+                <select
+                  value={gs.cameraMode}
+                  onChange={(e) => updateGS({ cameraMode: e.target.value as any })}
+                  className="bg-neutral-900 border border-neutral-800 rounded text-xs text-white px-2 py-1"
+                >
+                  <option value="third_person">3rd Person Over-Shoulder</option>
+                  <option value="first_person">1st Person FPS</option>
+                  <option value="shift_lock">Shift Lock Toggle</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-neutral-400">Field of View (FOV)</span>
+                  <span className="font-mono text-indigo-400">{gs.fov}°</span>
+                </div>
+                <input
+                  type="range"
+                  min={40}
+                  max={110}
+                  value={gs.fov}
+                  onChange={(e) => updateGS({ fov: parseInt(e.target.value, 10) })}
+                  className="w-full accent-indigo-500 bg-neutral-900 rounded"
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-neutral-300">PVP Combat Damage</span>
+                <input
+                  type="checkbox"
+                  checked={gs.pvpDamage}
+                  onChange={(e) => updateGS({ pvpDamage: e.target.checked })}
+                  className="rounded border-neutral-800 bg-neutral-900 text-indigo-500 focus:ring-0 cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-neutral-300">Fall Damage</span>
+                <input
+                  type="checkbox"
+                  checked={gs.fallDamage}
+                  onChange={(e) => updateGS({ fallDamage: e.target.checked })}
+                  className="rounded border-neutral-800 bg-neutral-900 text-indigo-500 focus:ring-0 cursor-pointer"
+                />
+              </div>
+            </div>
+          </Section>
+        </div>
+      </div>
+    );
+  }
 
   if (selectedId === 'world_settings') {
+    const SKY_PRESETS = [
+      { label: 'Dawn (5:00 AM)', time: 5.0 },
+      { label: 'Morning (9:00 AM)', time: 9.0 },
+      { label: 'Noon (12:00 PM)', time: 12.0 },
+      { label: 'Afternoon (3:00 PM)', time: 15.0 },
+      { label: 'Sunset / Golden Hour (6:30 PM)', time: 18.5 },
+      { label: 'Dusk (8:00 PM)', time: 20.0 },
+      { label: 'Night (10:00 PM)', time: 22.0 },
+      { label: 'Midnight (12:00 AM)', time: 0.0 },
+      { label: 'Custom', time: null },
+    ];
+
+    const matchedSkyPreset = SKY_PRESETS.find(
+      (p) => p.time !== null && Math.abs(environment.timeOfDay - p.time) < 0.2
+    );
+    const currentSkyPresetLabel = matchedSkyPreset ? matchedSkyPreset.label : 'Custom';
+
+    const seasonSettings = environment.seasonSettings || {
+      enabled: false,
+      activeSeason: 'spring',
+      seasonCycleSpeed: 120,
+      currentWeather: 'clear',
+      weatherTransitionSpeed: 1.0,
+      autoWeatherChange: true,
+    };
+
+    const lensFlareLayers = environment.lensFlareLayers || [
+      {
+        id: 'layer-1',
+        name: 'Classic Flare Layer',
+        enabled: true,
+        textureUrl: '/Lens_flares_001-clearcut.png',
+        offsetX: -0.06,
+        offsetY: 0.05,
+        scale: 3600,
+        opacity: 1.0,
+      },
+    ];
+
+    const skyLayers = (environment as any).skyLayers || [
+      {
+        id: 'sky-layer-1',
+        name: 'Ethereal Clouds',
+        enabled: true,
+        textureUrl: null,
+        offsetX: 0,
+        offsetY: 0,
+        scale: 1.0,
+        opacity: 0.8,
+      },
+    ];
+
     return (
       <div
         role="region"
@@ -266,551 +546,710 @@ export default function InspectorPanel() {
             </button>
           </div>
 
-          <Section title="Environment" icon={Sun} colorClass="text-emerald-500">
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Sky Preset</span>
-              <select
-                className="bg-bg-deep border border-border text-text-primary px-2 py-1.5 rounded-md w-full font-mono text-[11px] focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-all"
-                value={environment.preset}
-                onChange={(e) => updateEnvironment({ preset: e.target.value as EnvironmentSettings['preset'] })}
-              >
-                {['city', 'sunset', 'dawn', 'night', 'warehouse', 'forest', 'apartment', 'studio', 'park', 'lobby'].map(
-                  (p) => (
-                    <option key={p} value={p}>
-                      {p.toUpperCase()}
-                    </option>
-                  ),
-                )}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Time of Day</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0"
-                  max="24"
-                  step="0.1"
-                  className="w-full accent-emerald-500"
-                  value={environment.timeOfDay}
-                  onChange={(e) => updateEnvironment({ timeOfDay: parseFloat(e.target.value) })}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {environment.timeOfDay.toFixed(1)}h
-                </span>
+          {/* 1. SEASONS & WEATHER SECTION */}
+          <Section title="Seasons & Weather" icon={Calendar} colorClass="text-sky-400">
+            <div className="space-y-3">
+              <div className="grid grid-cols-[130px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Dynamic Seasons</span>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={seasonSettings.enabled || false}
+                    onChange={(e) =>
+                      updateEnvironment({
+                        seasonSettings: { ...seasonSettings, enabled: e.target.checked },
+                      })
+                    }
+                  />
+                  <span className="text-xs text-text-primary font-medium">
+                    {seasonSettings.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </label>
               </div>
-            </div>
 
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Cycle Speed</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="10"
-                  max="600"
-                  step="10"
-                  className="w-full accent-emerald-500"
-                  value={environment.cycleDuration}
-                  onChange={(e) => updateEnvironment({ cycleDuration: parseInt(e.target.value) })}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {environment.cycleDuration}s
-                </span>
-              </div>
-            </div>
+              {seasonSettings.enabled && (
+                <>
+                  <div className="grid grid-cols-[130px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Active Season</span>
+                    <select
+                      className="bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-md w-full font-mono text-[11px] focus:border-accent outline-none"
+                      value={seasonSettings.activeSeason || 'spring'}
+                      onChange={(e) =>
+                        updateEnvironment({
+                          seasonSettings: { ...seasonSettings, activeSeason: e.target.value as any },
+                        })
+                      }
+                    >
+                      <option value="spring">🌸 Spring</option>
+                      <option value="summer">☀️ Summer</option>
+                      <option value="autumn">🍂 Autumn</option>
+                      <option value="winter">❄️ Winter</option>
+                    </select>
+                  </div>
 
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Ambient</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.05"
-                  className="w-full accent-emerald-500"
-                  value={environment.ambientIntensity}
-                  onChange={(e) => updateEnvironment({ ambientIntensity: parseFloat(e.target.value) })}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {environment.ambientIntensity.toFixed(2)}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Directional</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0"
-                  max="5"
-                  step="0.1"
-                  className="w-full accent-emerald-500"
-                  value={environment.directionalIntensity}
-                  onChange={(e) => updateEnvironment({ directionalIntensity: parseFloat(e.target.value) })}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {environment.directionalIntensity.toFixed(2)}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Bloom</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0"
-                  max="3"
-                  step="0.1"
-                  className="w-full accent-purple-500"
-                  value={environment.bloomIntensity}
-                  onChange={(e) => updateEnvironment({ bloomIntensity: parseFloat(e.target.value) })}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {environment.bloomIntensity.toFixed(2)}
-                </span>
-              </div>
-            </div>
-
-            <div className="h-px bg-border my-2" />
-
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Fog</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={environment.fogEnabled}
-                  onChange={(e) => updateEnvironment({ fogEnabled: e.target.checked })}
-                />
-                <span className="text-[11px] text-text-primary">Enabled</span>
-              </div>
-            </div>
-
-            {environment.fogEnabled && (
-              <>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Fog Color</span>
-                  <div className="flex items-center gap-2">
-                    <div className="relative w-full h-7 rounded border border-border overflow-hidden">
+                  <div className="grid grid-cols-[130px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Cycle Speed</span>
+                    <div className="flex items-center gap-2">
                       <input
-                        type="color"
-                        className="absolute -top-2 -left-2 w-16 h-16 cursor-pointer"
-                        value={environment.fogColor}
-                        onChange={(e) => updateEnvironment({ fogColor: e.target.value })}
+                        type="range"
+                        min="10"
+                        max="600"
+                        step="10"
+                        className="w-full accent-sky-400"
+                        value={seasonSettings.seasonCycleSpeed || 120}
+                        onChange={(e) =>
+                          updateEnvironment({
+                            seasonSettings: { ...seasonSettings, seasonCycleSpeed: parseInt(e.target.value) },
+                          })
+                        }
                       />
+                      <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {seasonSettings.seasonCycleSpeed || 120}s
+                      </span>
                     </div>
                   </div>
-                </div>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Density</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0"
-                      max="0.1"
-                      step="0.001"
-                      className="w-full accent-blue-500"
-                      value={environment.fogDensity}
-                      onChange={(e) => updateEnvironment({ fogDensity: parseFloat(e.target.value) })}
-                    />
-                    <span className="w-12 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {environment.fogDensity.toFixed(3)}
-                    </span>
-                  </div>
-                </div>
-              </>
-            )}
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary font-semibold">Clouds</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={environment.cloudsEnabled}
-                  onChange={(e) => updateEnvironment({ cloudsEnabled: e.target.checked })}
-                />
-                <span className="text-[11px] text-text-primary">Enabled</span>
+                </>
+              )}
+            </div>
+          </Section>
+
+          {/* 2. ENVIRONMENT & TIME CONTROLS SECTION */}
+          <Section title="Environment" icon={Sun} colorClass="text-emerald-500">
+            <div className="space-y-3">
+              {/* Sky Presets Dropdown */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Sky Preset</span>
+                <select
+                  className="bg-bg-deep border border-border text-text-primary px-2 py-1.5 rounded-md w-full font-mono text-[11px] focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-all cursor-pointer"
+                  value={currentSkyPresetLabel}
+                  onChange={(e) => {
+                    const found = SKY_PRESETS.find((p) => p.label === e.target.value);
+                    if (found && found.time !== null) {
+                      updateEnvironment({ timeOfDay: found.time, skyPreset: found.label });
+                      toast.success('Sky Preset Loaded', `Loaded preset: ${found.label}`);
+                    }
+                  }}
+                >
+                  {SKY_PRESETS.map((p) => (
+                    <option key={p.label} value={p.label}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-            </div>
 
-             {environment.cloudsEnabled && (
-              <>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Type</span>
-                  <select
-                    className="w-full bg-bg-deep border border-border rounded px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent"
-                    value={environment.cloudsType}
-                    onChange={(e) => updateEnvironment({ cloudsType: e.target.value as any })}
-                  >
-                    <option value="volumetric">Volumetric (3D Puffs)</option>
-                    <option value="flat">Flat (2D Stratus)</option>
-                    <option value="cirrus">Cirrus (Wispy)</option>
-                    <option value="voxel">Voxel / Chiseled</option>
-                    <option value="nimbus">Nimbus (Heavy Storm Cirrus)</option>
-                    <option value="snow">Thick Puff</option>
-                    <option value="blizzard">Blizzard (Storm Cirrus)</option>
-                  </select>
+              {/* Time of Day Slider */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Time of Day</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="24"
+                    step="0.1"
+                    className="w-full accent-amber-500"
+                    value={environment.timeOfDay}
+                    onChange={(e) => updateEnvironment({ timeOfDay: parseFloat(e.target.value) })}
+                  />
+                  <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                    {environment.timeOfDay.toFixed(1)}h
+                  </span>
                 </div>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Density</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      className="w-full accent-blue-500"
-                      value={environment.cloudsDensity}
-                      onChange={(e) => updateEnvironment({ cloudsDensity: parseFloat(e.target.value) })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {environment.cloudsDensity.toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Wind Speed</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0"
-                      max="50"
-                      step="1"
-                      className="w-full accent-blue-500"
-                      value={Math.round(environment.cloudsSpeed * 10)}
-                      onChange={(e) => updateEnvironment({ cloudsSpeed: parseFloat(e.target.value) / 10 })}
-                    />
-                    <span className="w-12 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {Math.round(environment.cloudsSpeed * 10)} mph
-                    </span>
-                  </div>
-                </div>
-              </>
-            )}
-            {/* Rain Settings */}
-            <div className="h-px bg-border my-2" />
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Rain</span>
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                  checked={environment.rainEnabled || false}
-                  onChange={(e) => updateEnvironment({ rainEnabled: e.target.checked })}
-                />
-                <span className="text-xs text-text-primary">Enabled</span>
-              </label>
-            </div>
+              </div>
 
-            {environment.rainEnabled && (
-              <>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Density</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="1.0"
-                      step="0.05"
-                      className="w-full accent-blue-500"
-                      value={environment.rainIntensity || 0.5}
-                      onChange={(e) => updateEnvironment({ rainIntensity: parseFloat(e.target.value) })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {Math.round((environment.rainIntensity || 0.5) * 100)}%
-                    </span>
-                  </div>
+              {/* Ambient Light Slider */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Ambient Light</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="2"
+                    step="0.01"
+                    className="w-full accent-emerald-500"
+                    value={environment.ambientIntensity}
+                    onChange={(e) => updateEnvironment({ ambientIntensity: parseFloat(e.target.value) })}
+                  />
+                  <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                    {environment.ambientIntensity.toFixed(2)}
+                  </span>
                 </div>
+              </div>
 
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Fall Speed</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.2"
-                      max="3.0"
-                      step="0.1"
-                      className="w-full accent-blue-500"
-                      value={environment.rainSpeed || 1.0}
-                      onChange={(e) => updateEnvironment({ rainSpeed: parseFloat(e.target.value) })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {(environment.rainSpeed || 1.0).toFixed(1)}x
-                    </span>
-                  </div>
+              {/* Space Mode Checkbox */}
+              <div className="flex items-center justify-between pt-1 pb-1">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-indigo-400 focus:ring-indigo-400 bg-bg-deep w-3.5 h-3.5"
+                    checked={environment.spaceEnabled !== false}
+                    onChange={(e) => updateEnvironment({ spaceEnabled: e.target.checked, spaceMode: e.target.checked })}
+                  />
+                  <span className="text-xs text-indigo-300 font-medium">🚀 Space Atmosphere Enabled (Altitude Transition)</span>
+                </label>
+              </div>
+
+              {/* Exposure Slider */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary">Exposure</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="3"
+                    step="0.1"
+                    className="w-full accent-yellow-500"
+                    value={environment.exposure}
+                    onChange={(e) => updateEnvironment({ exposure: parseFloat(e.target.value) })}
+                  />
+                  <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                    {environment.exposure.toFixed(2)}
+                  </span>
                 </div>
-
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Texture</span>
-                  <div className="flex items-center gap-2">
-                    <label className="flex-1">
-                      <div className="w-full text-center bg-bg-deep border border-border border-dashed hover:border-accent hover:text-accent rounded py-1 px-2 text-[10px] font-medium text-text-secondary cursor-pointer transition-colors duration-150 flex items-center justify-center gap-1.5">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                        </svg>
-                        {environment.rainTextureUrl ? 'Change' : 'Import'}
-                      </div>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              updateEnvironment({ rainTextureUrl: reader.result as string });
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                      />
-                    </label>
-                    {environment.rainTextureUrl && (
-                      <div className="flex items-center gap-1">
-                        <div className="w-5 h-5 rounded border border-border bg-bg-deep overflow-hidden flex items-center justify-center">
-                          <img src={environment.rainTextureUrl} className="w-full h-full object-cover" />
-                        </div>
-                        <button
-                          type="button"
-                          className="p-1 hover:text-red-400 text-text-secondary transition-colors rounded hover:bg-bg-deep"
-                          onClick={() => updateEnvironment({ rainTextureUrl: null })}
-                          title="Reset to default procedural rain"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-            {/* Snow Settings */}
-            <div className="h-px bg-border my-2" />
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Snow</span>
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                  checked={environment.snowEnabled || false}
-                  onChange={(e) => updateEnvironment({ snowEnabled: e.target.checked })}
-                />
-                <span className="text-xs text-text-primary">Enabled</span>
-              </label>
-            </div>
-
-            {environment.snowEnabled && (
-              <>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Density</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.1"
-                      max="1.0"
-                      step="0.05"
-                      className="w-full accent-blue-500"
-                      value={environment.snowIntensity || 0.5}
-                      onChange={(e) => updateEnvironment({ snowIntensity: parseFloat(e.target.value) })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {Math.round((environment.snowIntensity || 0.5) * 100)}%
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Fall Speed</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.2"
-                      max="3.0"
-                      step="0.1"
-                      className="w-full accent-blue-500"
-                      value={environment.snowSpeed || 1.0}
-                      onChange={(e) => updateEnvironment({ snowSpeed: parseFloat(e.target.value) })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {(environment.snowSpeed || 1.0).toFixed(1)}x
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Texture</span>
-                  <div className="flex items-center gap-2">
-                    <label className="flex-1">
-                      <div className="w-full text-center bg-bg-deep border border-border border-dashed hover:border-accent hover:text-accent rounded py-1 px-2 text-[10px] font-medium text-text-secondary cursor-pointer transition-colors duration-150 flex items-center justify-center gap-1.5">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                        </svg>
-                        {environment.snowTextureUrl ? 'Change' : 'Import'}
-                      </div>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              updateEnvironment({ snowTextureUrl: reader.result as string });
-                            };
-                            reader.readAsDataURL(file);
-                          }
-                        }}
-                      />
-                    </label>
-                    {environment.snowTextureUrl && (
-                      <div className="flex items-center gap-1">
-                        <div className="w-5 h-5 rounded border border-border bg-bg-deep overflow-hidden flex items-center justify-center">
-                          <img src={environment.snowTextureUrl} className="w-full h-full object-cover" />
-                        </div>
-                        <button
-                          type="button"
-                          className="p-1 hover:text-red-400 text-text-secondary transition-colors rounded hover:bg-bg-deep"
-                          onClick={() => updateEnvironment({ snowTextureUrl: null })}
-                          title="Reset to default procedural snow"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-            {/* Wind Settings */}
-            <div className="h-px bg-border my-2" />
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Wind</span>
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                  checked={environment.windEnabled || false}
-                  onChange={(e) => updateEnvironment({ windEnabled: e.target.checked })}
-                />
-                <span className="text-xs text-text-primary">Enabled</span>
-              </label>
-            </div>
-
-            {environment.windEnabled && (
-              <>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Strength</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.0"
-                      max="10.0"
-                      step="0.5"
-                      className="w-full accent-blue-500"
-                      value={environment.windStrength || 2.0}
-                      onChange={(e) => updateEnvironment({ windStrength: parseFloat(e.target.value) })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {(environment.windStrength || 2.0).toFixed(1)}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Direction</span>
-                  <select
-                    className="w-full bg-bg-deep border border-border rounded px-2 py-1 text-xs text-text-primary focus:border-accent outline-none"
-                    value={environment.windDirection || 'SE'}
-                    onChange={(e) => updateEnvironment({ windDirection: e.target.value as any })}
-                  >
-                    <option value="N">North (↑)</option>
-                    <option value="NE">Northeast (↗)</option>
-                    <option value="E">East (→)</option>
-                    <option value="SE">Southeast (↘)</option>
-                    <option value="S">South (↓)</option>
-                    <option value="SW">Southwest (↙)</option>
-                    <option value="W">West (←)</option>
-                    <option value="NW">Northwest (↖)</option>
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Gustiness</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.0"
-                      max="2.0"
-                      step="0.1"
-                      className="w-full accent-blue-500"
-                      value={environment.windTurbulence || 0.5}
-                      onChange={(e) => updateEnvironment({ windTurbulence: parseFloat(e.target.value) })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {(environment.windTurbulence || 0.5).toFixed(1)}x
-                    </span>
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div className="h-px bg-border my-2" />
-
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Exposure</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0"
-                  max="3"
-                  step="0.1"
-                  className="w-full accent-yellow-500"
-                  value={environment.exposure}
-                  onChange={(e) => updateEnvironment({ exposure: parseFloat(e.target.value) })}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {environment.exposure.toFixed(2)}
-                </span>
               </div>
             </div>
           </Section>
 
-          <Section title="Visibility" icon={Eye} colorClass="text-blue-500">
-            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Physics Debugger</span>
-              <button
-                onClick={() => togglePhysicsDebug()}
-                className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors w-16 text-center ${showPhysicsDebug ? 'bg-blue-500/20 text-blue-500 border border-blue-500/50' : 'bg-bg-deep text-text-secondary border border-border'}`}
-              >
-                {showPhysicsDebug ? 'ON' : 'OFF'}
-              </button>
-            </div>
+          {/* Volumetric Clouds & Sky Atmosphere Section */}
+          <Section title="Volumetric Clouds & Atmosphere" icon={Cloud} colorClass="text-sky-400">
+            <div className="space-y-3">
+              {/* Enable Clouds Checkbox */}
+              <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={environment.cloudsEnabled !== false}
+                    onChange={(e) => updateEnvironment({ cloudsEnabled: e.target.checked })}
+                  />
+                  <span className="text-xs text-text-primary font-medium">Volumetric Clouds Enabled</span>
+                </label>
+              </div>
 
-            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Emitters & Lights</span>
-              <button
-                onClick={() => toggleEmitters()}
-                className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors w-16 text-center ${showEmitters ? 'bg-blue-500/20 text-blue-500 border border-blue-500/50' : 'bg-bg-deep text-text-secondary border border-border'}`}
-              >
-                {showEmitters ? 'ON' : 'OFF'}
-              </button>
-            </div>
+              {environment.cloudsEnabled !== false && (
+                <div className="space-y-2.5">
+                  {/* Cloud Preset / Model Type */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary font-medium">Cloud Type</span>
+                    <select
+                      className="bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-md w-full font-mono text-[11px] focus:border-accent outline-none cursor-pointer"
+                      value={environment.cloudsType || 'volumetric'}
+                      onChange={(e) => updateEnvironment({ cloudsType: e.target.value as any })}
+                    >
+                      <option value="volumetric">☁️ Volumetric Cumulus</option>
+                      <option value="flat">🌤️ Flat Stratus Layer</option>
+                      <option value="cirrus">🌫️ Wispy Cirrus</option>
+                      <option value="nimbus">🌧️ Storm Nimbus</option>
+                      <option value="voxel">🧊 Voxel Style</option>
+                      <option value="blizzard">🌨️ Blizzard</option>
+                    </select>
+                  </div>
 
-            <div className="grid grid-cols-[120px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Wireframe Mode</span>
-              <button
-                onClick={() => toggleWireframeMode()}
-                className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors w-16 text-center ${wireframeMode ? 'bg-blue-500/20 text-blue-500 border border-blue-500/50' : 'bg-bg-deep text-text-secondary border border-border'}`}
-              >
-                {wireframeMode ? 'ON' : 'OFF'}
-              </button>
+                  {/* Cloud Density Slider */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary font-medium">Density</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="1.0"
+                        step="0.05"
+                        className="w-full accent-sky-400"
+                        value={environment.cloudsDensity ?? 0.5}
+                        onChange={(e) => updateEnvironment({ cloudsDensity: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {((environment.cloudsDensity ?? 0.5) * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Cloud Speed Slider */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary font-medium">Drift Speed</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0.0"
+                        max="5.0"
+                        step="0.1"
+                        className="w-full accent-sky-400"
+                        value={environment.cloudsSpeed ?? 1.0}
+                        onChange={(e) => updateEnvironment({ cloudsSpeed: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(environment.cloudsSpeed ?? 1.0).toFixed(1)}x
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Cloud Altitude / Height Slider */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary font-medium">Altitude</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="100"
+                        max="2500"
+                        step="10"
+                        className="w-full accent-sky-400"
+                        value={environment.cloudsAltitude ?? 350}
+                        onChange={(e) => updateEnvironment({ cloudsAltitude: parseInt(e.target.value) })}
+                      />
+                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {environment.cloudsAltitude ?? 350}m
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Cloud Size / Scale Slider */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary font-medium">Cloud Size</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0.2"
+                        max="8.0"
+                        step="0.1"
+                        className="w-full accent-sky-400"
+                        value={environment.cloudsSize ?? 1.0}
+                        onChange={(e) => updateEnvironment({ cloudsSize: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(environment.cloudsSize ?? 1.0).toFixed(1)}x
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Wind Integration */}
+                  <div className="pt-2 border-t border-border/30 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border text-sky-400 focus:ring-sky-400 bg-bg-deep w-3.5 h-3.5"
+                        checked={environment.windEnabled !== false}
+                        onChange={(e) => updateEnvironment({ windEnabled: e.target.checked })}
+                      />
+                      <span className="text-[11px] text-sky-300 font-medium">Wind Simulation & Drift</span>
+                    </label>
+
+                    {environment.windEnabled !== false && (
+                      <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                        <span className="text-[11px] text-text-secondary font-medium">Wind Strength</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="range"
+                            min="0.5"
+                            max="10.0"
+                            step="0.5"
+                            className="w-full accent-sky-400"
+                            value={environment.windStrength ?? 2.0}
+                            onChange={(e) => updateEnvironment({ windStrength: parseFloat(e.target.value) })}
+                          />
+                          <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                            {(environment.windStrength ?? 2.0).toFixed(1)}m/s
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          {/* 3. PLANAR SKY LAYERS */}
+          <Section title="Planar Sky Layers" icon={Layers} colorClass="text-indigo-400">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-text-secondary font-medium">Multi-Layer Sky Maps</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newSky = {
+                      id: `sky-${Date.now()}`,
+                      name: `Sky Layer ${skyLayers.length + 1}`,
+                      enabled: true,
+                      textureUrl: null,
+                      offsetX: 0,
+                      offsetY: 0,
+                      scale: 1.0,
+                      opacity: 0.8,
+                    };
+                    updateEnvironment({ skyLayers: [...skyLayers, newSky] } as any);
+                    toast.success('Sky Layer Added', 'New planar sky layer created.');
+                  }}
+                  className="px-2 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 rounded text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus size={12} /> Add Sky Layer
+                </button>
+              </div>
+
+              <div className="space-y-2 mt-2">
+                {skyLayers.map((layer: any, idx: number) => (
+                  <div key={layer.id || idx} className="p-2.5 bg-bg-deep border border-border rounded-lg space-y-2 relative">
+                    <div className="flex items-center justify-between pb-1 border-b border-border/40">
+                      <span className="text-[10px] font-bold text-text-primary uppercase tracking-wider">
+                        Sky Layer {idx + 1}: {layer.name || 'Ethereal Clouds'}
+                      </span>
+                      {skyLayers.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = skyLayers.filter((_: any, i: number) => i !== idx);
+                            updateEnvironment({ skyLayers: updated } as any);
+                          }}
+                          className="text-text-secondary hover:text-rose-400 transition-colors p-0.5 cursor-pointer"
+                          title="Remove Layer"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                      <span className="text-[10px] text-text-secondary">Preset Texture</span>
+                      <select
+                        className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[10px] text-text-primary outline-none"
+                        value={layer.name || 'Ethereal Clouds'}
+                        onChange={(e) => {
+                          const updated = [...skyLayers];
+                          updated[idx] = { ...updated[idx], name: e.target.value };
+                          updateEnvironment({ skyLayers: updated } as any);
+                        }}
+                      >
+                        <option value="Ethereal Clouds">Ethereal Clouds</option>
+                        <option value="Wispy Cirrus">Wispy Cirrus</option>
+                        <option value="Cumulus Puffs">Cumulus Puffs</option>
+                        <option value="Nebula Glow">Nebula Glow</option>
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                      <span className="text-[10px] text-text-secondary">Offset X / Y</span>
+                      <div className="grid grid-cols-2 gap-1">
+                        <input
+                          type="range"
+                          min="-1"
+                          max="1"
+                          step="0.01"
+                          className="w-full accent-indigo-400"
+                          value={layer.offsetX ?? 0}
+                          onChange={(e) => {
+                            const updated = [...skyLayers];
+                            updated[idx] = { ...updated[idx], offsetX: parseFloat(e.target.value) };
+                            updateEnvironment({ skyLayers: updated } as any);
+                          }}
+                        />
+                        <input
+                          type="range"
+                          min="-1"
+                          max="1"
+                          step="0.01"
+                          className="w-full accent-indigo-400"
+                          value={layer.offsetY ?? 0}
+                          onChange={(e) => {
+                            const updated = [...skyLayers];
+                            updated[idx] = { ...updated[idx], offsetY: parseFloat(e.target.value) };
+                            updateEnvironment({ skyLayers: updated } as any);
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                      <span className="text-[10px] text-text-secondary">Scale & Opacity</span>
+                      <div className="grid grid-cols-2 gap-1">
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="10"
+                          step="0.1"
+                          className="w-full accent-indigo-400"
+                          value={layer.scale ?? 1.0}
+                          onChange={(e) => {
+                            const updated = [...skyLayers];
+                            updated[idx] = { ...updated[idx], scale: parseFloat(e.target.value) };
+                            updateEnvironment({ skyLayers: updated } as any);
+                          }}
+                        />
+                        <input
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.05"
+                          className="w-full accent-indigo-400"
+                          value={layer.opacity ?? 0.8}
+                          onChange={(e) => {
+                            const updated = [...skyLayers];
+                            updated[idx] = { ...updated[idx], opacity: parseFloat(e.target.value) };
+                            updateEnvironment({ skyLayers: updated } as any);
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Section>
+
+          {/* 5. ATMOSPHERIC DISTANCE FOG */}
+          <Section title="Atmospheric Distance Fog" icon={Cloud} colorClass="text-sky-300">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={environment.fogEnabled}
+                    onChange={(e) => updateEnvironment({ fogEnabled: e.target.checked })}
+                  />
+                  <span className="text-xs text-text-primary font-medium">Distance Fog Enabled</span>
+                </label>
+              </div>
+
+              {environment.fogEnabled && (
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary font-medium">Fog Color</span>
+                    <div className="relative w-full h-7 rounded border border-border overflow-hidden">
+                      <input
+                        type="color"
+                        className="absolute -top-2 -left-2 w-16 h-16 cursor-pointer"
+                        value={environment.fogColor || '#a0c4ff'}
+                        onChange={(e) => updateEnvironment({ fogColor: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary font-medium">Fog Density</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0"
+                        max="0.1"
+                        step="0.001"
+                        className="w-full accent-sky-400"
+                        value={environment.fogDensity ?? 0.015}
+                        onChange={(e) => updateEnvironment({ fogDensity: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-12 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(environment.fogDensity ?? 0.015).toFixed(3)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          {/* 6. WEATHER & PARTICLES */}
+          <Section title="Weather Particles" icon={CloudRain} colorClass="text-blue-400">
+            <div className="space-y-3">
+              {/* Rain */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Rain Particles</span>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={environment.rainEnabled || false}
+                    onChange={(e) => updateEnvironment({ rainEnabled: e.target.checked })}
+                  />
+                  <span className="text-xs text-text-primary">Enabled</span>
+                </label>
+              </div>
+
+              {environment.rainEnabled && (
+                <div className="space-y-2 pl-2 border-l border-border/40 ml-1">
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Density</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="1.0"
+                        step="0.05"
+                        className="w-full accent-blue-500"
+                        value={environment.rainIntensity || 0.5}
+                        onChange={(e) => updateEnvironment({ rainIntensity: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {Math.round((environment.rainIntensity || 0.5) * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 mt-1">
+                    <label className="text-[11px] text-text-secondary font-medium">Particle Texture</label>
+                    {environment.rainTextureUrl ? (
+                      <div className="flex items-center gap-2 bg-bg-deep p-2 rounded-lg border border-border">
+                        <img src={environment.rainTextureUrl} className="w-8 h-8 rounded object-cover border border-border shrink-0" alt="Rain Texture" />
+                        <span className="text-xs text-text-primary truncate flex-1 font-mono">
+                          Custom Rain Texture
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateEnvironment({ rainTextureUrl: null })}
+                          className="text-xs text-rose-400 hover:text-rose-300 transition-colors px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 rounded border border-rose-500/30 cursor-pointer shrink-0"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-text-secondary/60 italic mb-1">Using default procedural rain particle</div>
+                    )}
+
+                    {(() => {
+                      const isPickingThis = isPickingAsset && activePickerTarget === 'rainTexture';
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isPickingThis) {
+                              setIsPickingAsset(false);
+                              setActivePickerTarget(null);
+                            } else {
+                              setIsPickingAsset(true);
+                              setActivePickerTarget('rainTexture');
+                            }
+                          }}
+                          className={`w-full py-1.5 px-3 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                            isPickingThis
+                              ? 'bg-blue-500/20 border border-blue-500/50 text-blue-300 animate-pulse'
+                              : 'bg-accent hover:bg-accent/90 text-white shadow-md'
+                          }`}
+                        >
+                          <Folder size={14} />
+                          <span>{isPickingThis ? 'Select Texture in Content Browser...' : environment.rainTextureUrl ? 'Change Rain Texture' : 'Assign Rain Texture from Assets'}</span>
+                        </button>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              <div className="h-px bg-border my-2" />
+
+              {/* Snow */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Snow Particles</span>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={environment.snowEnabled || false}
+                    onChange={(e) => updateEnvironment({ snowEnabled: e.target.checked })}
+                  />
+                  <span className="text-xs text-text-primary">Enabled</span>
+                </label>
+              </div>
+
+              {environment.snowEnabled && (
+                <div className="space-y-2 pl-2 border-l border-border/40 ml-1">
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Density</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="1.0"
+                        step="0.05"
+                        className="w-full accent-blue-500"
+                        value={environment.snowIntensity || 0.5}
+                        onChange={(e) => updateEnvironment({ snowIntensity: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {Math.round((environment.snowIntensity || 0.5) * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 mt-1">
+                    <label className="text-[11px] text-text-secondary font-medium">Particle Texture</label>
+                    {environment.snowTextureUrl ? (
+                      <div className="flex items-center gap-2 bg-bg-deep p-2 rounded-lg border border-border">
+                        <img src={environment.snowTextureUrl} className="w-8 h-8 rounded object-cover border border-border shrink-0" alt="Snow Texture" />
+                        <span className="text-xs text-text-primary truncate flex-1 font-mono">
+                          Custom Snow Texture
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateEnvironment({ snowTextureUrl: null })}
+                          className="text-xs text-rose-400 hover:text-rose-300 transition-colors px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 rounded border border-rose-500/30 cursor-pointer shrink-0"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-text-secondary/60 italic mb-1">Using default procedural snow particle</div>
+                    )}
+
+                    {(() => {
+                      const isPickingThis = isPickingAsset && activePickerTarget === 'snowTexture';
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isPickingThis) {
+                              setIsPickingAsset(false);
+                              setActivePickerTarget(null);
+                            } else {
+                              setIsPickingAsset(true);
+                              setActivePickerTarget('snowTexture');
+                            }
+                          }}
+                          className={`w-full py-1.5 px-3 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                            isPickingThis
+                              ? 'bg-blue-500/20 border border-blue-500/50 text-blue-300 animate-pulse'
+                              : 'bg-accent hover:bg-accent/90 text-white shadow-md'
+                          }`}
+                        >
+                          <Folder size={14} />
+                          <span>{isPickingThis ? 'Select Texture in Content Browser...' : environment.snowTextureUrl ? 'Change Snow Texture' : 'Assign Snow Texture from Assets'}</span>
+                        </button>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          {/* 7. VISIBILITY & DEBUGGER */}
+          <Section title="Visibility & Debug" icon={Eye} colorClass="text-blue-500">
+            <div className="space-y-2">
+              <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary">Physics Debugger</span>
+                <button
+                  onClick={() => togglePhysicsDebug()}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors w-16 text-center ${showPhysicsDebug ? 'bg-blue-500/20 text-blue-500 border border-blue-500/50' : 'bg-bg-deep text-text-secondary border border-border'}`}
+                >
+                  {showPhysicsDebug ? 'ON' : 'OFF'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary">Emitters & Lights</span>
+                <button
+                  onClick={() => toggleEmitters()}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors w-16 text-center ${showEmitters ? 'bg-blue-500/20 text-blue-500 border border-blue-500/50' : 'bg-bg-deep text-text-secondary border border-border'}`}
+                >
+                  {showEmitters ? 'ON' : 'OFF'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-[120px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary">Wireframe Mode</span>
+                <button
+                  onClick={() => toggleWireframeMode()}
+                  className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors w-16 text-center ${wireframeMode ? 'bg-blue-500/20 text-blue-500 border border-blue-500/50' : 'bg-bg-deep text-text-secondary border border-border'}`}
+                >
+                  {wireframeMode ? 'ON' : 'OFF'}
+                </button>
+              </div>
             </div>
           </Section>
         </div>
@@ -845,6 +1284,34 @@ export default function InspectorPanel() {
 
   const isParticleEffect = ['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(selectedObj.type) || 
                            ['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(selectedObj.geometry || '');
+
+  const activePlayerId = useStore.getState().activePlayerId;
+
+  const isStarterPlayer = selectedObj.id === 'starter_player' || 
+                          selectedObj.parentId === 'starter_player' ||
+                          selectedObj.name === 'Starter Player' ||
+                          selectedObj.id === activePlayerId ||
+                          !!selectedObj.characterActions;
+
+  const targetPlayerObj = selectedObj.parentId === 'starter_player' || selectedObj.id === activePlayerId
+    ? selectedObj 
+    : (objects.find((o) => o.parentId === 'starter_player' || o.id === activePlayerId) || selectedObj);
+
+  const targetActions = targetPlayerObj.characterActions || {
+    autoJump: false,
+    doubleJump: false,
+    sprintEnabled: true,
+    crouchEnabled: false,
+    dashEnabled: false,
+    dashDistance: 5.0,
+    dashCooldown: 1.0,
+    autoClimb: false,
+    footstepAudioEnabled: false,
+    footstepAudioUrl: '/sounds/footstep.wav',
+    cameraZoomEnabled: true,
+    minCameraDistance: 2.0,
+    maxCameraDistance: 15.0,
+  };
 
   const handleVectorChange = (prop: 'position' | 'rotation' | 'scale', index: number, value: string) => {
     const num = parseFloat(value);
@@ -926,6 +1393,108 @@ export default function InspectorPanel() {
           )}
         </Section>
 
+        {/* Voxel Block Hotbar Section */}
+        {selectedObj.type === 'voxel_hotbar' && selectedObj.voxelHotbarProps && (
+          <Section title="Voxel Block Hotbar (HUD)" icon={Layers} colorClass="text-cyan-400">
+            <div className="space-y-3 p-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-neutral-400">Slot Count (1-9)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={9}
+                  value={selectedObj.voxelHotbarProps.slotCount}
+                  onChange={(e) => {
+                    const val = Math.min(9, Math.max(1, parseInt(e.target.value, 10) || 9));
+                    updateObject(selectedObj.id, {
+                      voxelHotbarProps: {
+                        ...selectedObj.voxelHotbarProps!,
+                        slotCount: val,
+                      },
+                    });
+                  }}
+                  className="w-16 bg-neutral-900 border border-neutral-800 rounded px-2 py-1 text-right text-xs text-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-neutral-400">Show Keybind Hints (1-9)</span>
+                <input
+                  type="checkbox"
+                  checked={selectedObj.voxelHotbarProps.showKeybinds}
+                  onChange={(e) => {
+                    updateObject(selectedObj.id, {
+                      voxelHotbarProps: {
+                        ...selectedObj.voxelHotbarProps!,
+                        showKeybinds: e.target.checked,
+                      },
+                    });
+                  }}
+                  className="rounded border-neutral-800 bg-neutral-900 text-sky-500 focus:ring-0 cursor-pointer"
+                />
+              </div>
+
+              <div className="text-xs space-y-1.5 pt-2 border-t border-neutral-800/60">
+                <span className="font-bold text-neutral-300 block mb-1">Configured Hotbar Items ({selectedObj.voxelHotbarProps.items.length})</span>
+                {selectedObj.voxelHotbarProps.items.map((item, idx) => (
+                  <div key={item.id || idx} className="flex items-center gap-2 bg-neutral-900/60 p-2 rounded-lg border border-neutral-800">
+                    <span className="w-4 font-mono font-bold text-neutral-500 text-[10px]">{idx + 1}</span>
+                    <input
+                      type="color"
+                      value={item.color}
+                      onChange={(e) => {
+                        const newItems = [...selectedObj.voxelHotbarProps!.items];
+                        newItems[idx] = { ...newItems[idx], color: e.target.value };
+                        updateObject(selectedObj.id, {
+                          voxelHotbarProps: { ...selectedObj.voxelHotbarProps!, items: newItems },
+                        });
+                      }}
+                      className="w-6 h-6 rounded cursor-pointer border border-white/20 bg-transparent p-0"
+                    />
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={(e) => {
+                        const newItems = [...selectedObj.voxelHotbarProps!.items];
+                        newItems[idx] = { ...newItems[idx], name: e.target.value };
+                        updateObject(selectedObj.id, {
+                          voxelHotbarProps: { ...selectedObj.voxelHotbarProps!, items: newItems },
+                        });
+                      }}
+                      className="flex-1 bg-transparent text-xs text-white border-b border-transparent hover:border-neutral-700 focus:border-sky-500 focus:outline-none px-1"
+                    />
+                    <select
+                      value={item.geometry}
+                      onChange={(e) => {
+                        const newItems = [...selectedObj.voxelHotbarProps!.items];
+                        newItems[idx] = { ...newItems[idx], geometry: e.target.value as any };
+                        updateObject(selectedObj.id, {
+                          voxelHotbarProps: { ...selectedObj.voxelHotbarProps!, items: newItems },
+                        });
+                      }}
+                      className="bg-neutral-800 text-[10px] text-neutral-300 rounded px-1.5 py-0.5 border border-neutral-700"
+                    >
+                      <option value="box">Cube</option>
+                      <option value="pyramid">Pyramid</option>
+                      <option value="cone">Cone</option>
+                      <option value="cylinder">Cylinder</option>
+                      <option value="sphere">Sphere</option>
+                      <option value="wedge">Wedge</option>
+                      <option value="torus">Torus</option>
+                      <option value="roundedCube">Rounded Cube</option>
+                      <option value="teardrop">Teardrop / Egg</option>
+                      <option value="wingBlade">Wing / Fin / Scythe</option>
+                      <option value="curvedHorn">Curved Horn / Claw</option>
+                      <option value="taperedTorso">Tapered Torso / Pelvis</option>
+                      <option value="forearm">Forearm / Leg Limb</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Section>
+        )}
+
         {(selectedObj.type === 'mesh' || selectedObj.type === 'gltf' || (selectedObj.type as string) === 'fbx') && (
           <Section title="Asset Source" icon={Layers} colorClass="text-sky-400">
             <div className="space-y-3">
@@ -984,176 +1553,273 @@ export default function InspectorPanel() {
           </Section>
         )}
 
-        {selectedObj.celestialProps && (
-          <Section title="Celestial" icon={Sun} colorClass="text-amber-400">
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Temperature</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="2000"
-                  max="10000"
-                  step="100"
-                  className="w-full accent-amber-500"
-                  value={selectedObj.celestialProps.colorTemperature}
-                  onChange={(e) => {
-                    updateObject(selectedObj.id, {
-                      celestialProps: { ...selectedObj.celestialProps, colorTemperature: parseInt(e.target.value) }
-                    });
-                  }}
-                />
-                <span className="w-12 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {selectedObj.celestialProps.colorTemperature}K
-                </span>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Disk Scale</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0.1"
-                  max="5"
-                  step="0.1"
-                  className="w-full accent-amber-500"
-                  value={selectedObj.celestialProps.diskScale}
-                  onChange={(e) => {
-                    updateObject(selectedObj.id, {
-                      celestialProps: { ...selectedObj.celestialProps, diskScale: parseFloat(e.target.value) }
-                    });
-                  }}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {selectedObj.celestialProps.diskScale.toFixed(1)}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Volumetric Int.</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0"
-                  max="5"
-                  step="0.1"
-                  className="w-full accent-amber-500"
-                  value={selectedObj.celestialProps.volumetricIntensity}
-                  onChange={(e) => {
-                    updateObject(selectedObj.id, {
-                      celestialProps: { ...selectedObj.celestialProps, volumetricIntensity: parseFloat(e.target.value) }
-                    });
-                  }}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {selectedObj.celestialProps.volumetricIntensity.toFixed(1)}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">Atmosphere Cont.</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  className="w-full accent-amber-500"
-                  value={selectedObj.celestialProps.atmosphericContribution}
-                  onChange={(e) => {
-                    updateObject(selectedObj.id, {
-                      celestialProps: { ...selectedObj.celestialProps!, atmosphericContribution: parseFloat(e.target.value) }
-                    });
-                  }}
-                />
-                <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                  {selectedObj.celestialProps.atmosphericContribution.toFixed(2)}
-                </span>
-              </div>
-            </div>
-
-            <div className="h-px bg-border my-2" />
-
-            <div className="grid grid-cols-[90px_1fr] items-center gap-2">
-              <span className="text-[11px] text-text-secondary">God Rays</span>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={selectedObj.celestialProps.godRaysEnabled ?? false}
-                  onChange={(e) => updateObject(selectedObj.id, {
-                    celestialProps: { ...selectedObj.celestialProps!, godRaysEnabled: e.target.checked }
-                  })}
-                />
-                <span className="text-[11px] text-text-primary">Enabled</span>
-              </div>
-            </div>
-
-            {selectedObj.celestialProps.godRaysEnabled && (
-              <>
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2 mt-2">
-                  <span className="text-[11px] text-text-secondary">Ray Weight</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0"
-                      max="2"
-                      step="0.05"
-                      className="w-full accent-yellow-500"
-                      value={selectedObj.celestialProps.rayWeight ?? 0.6}
-                      onChange={(e) => updateObject(selectedObj.id, {
-                        celestialProps: { ...selectedObj.celestialProps!, rayWeight: parseFloat(e.target.value) }
-                      })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {(selectedObj.celestialProps.rayWeight ?? 0.6).toFixed(2)}
-                    </span>
-                  </div>
+        {(selectedObj.type === 'SUN' || selectedObj.type === 'MOON' || selectedObj.id === 'sun-light' || selectedObj.id === 'moon-light' || selectedObj.celestialProps) && (
+          <>
+            <Section title={selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 'Moon & Lunar Controls' : 'Sun & Atmospheric Controls'} icon={Sun} colorClass="text-amber-400">
+            <div className="space-y-3">
+              {/* Solar Trajectory / Time of Day */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Time of Day</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="24"
+                    step="0.1"
+                    className="w-full accent-amber-500"
+                    value={environment.timeOfDay}
+                    onChange={(e) => updateEnvironment({ timeOfDay: parseFloat(e.target.value) })}
+                  />
+                  <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                    {environment.timeOfDay.toFixed(1)}h
+                  </span>
                 </div>
+              </div>
 
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2 mt-2">
-                  <span className="text-[11px] text-text-secondary">Ray Decay</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0.8"
-                      max="1.0"
-                      step="0.01"
-                      className="w-full accent-yellow-500"
-                      value={selectedObj.celestialProps.rayDecay ?? 0.93}
-                      onChange={(e) => updateObject(selectedObj.id, {
-                        celestialProps: { ...selectedObj.celestialProps!, rayDecay: parseFloat(e.target.value) }
-                      })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {(selectedObj.celestialProps.rayDecay ?? 0.93).toFixed(2)}
-                    </span>
-                  </div>
+              {/* Light Intensity */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Light Intensity</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="10"
+                    step="0.1"
+                    className="w-full accent-amber-500"
+                    value={selectedObj.lightProps?.intensity ?? (selectedObj.type === 'SUN' || selectedObj.id === 'sun-light' ? 4.5 : 0.3)}
+                    onChange={(e) => {
+                      const newIntensity = parseFloat(e.target.value);
+                      updateObject(selectedObj.id, {
+                        lightProps: { ...selectedObj.lightProps, intensity: newIntensity }
+                      });
+                      if (selectedObj.type === 'SUN' || selectedObj.id === 'sun-light') {
+                        updateEnvironment({ directionalIntensity: newIntensity });
+                      }
+                    }}
+                  />
+                  <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                    {(selectedObj.lightProps?.intensity ?? (selectedObj.type === 'SUN' || selectedObj.id === 'sun-light' ? 4.5 : 0.3)).toFixed(1)}
+                  </span>
                 </div>
+              </div>
 
-                <div className="grid grid-cols-[90px_1fr] items-center gap-2 mt-2">
-                  <span className="text-[11px] text-text-secondary">Ray Exposure</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="range"
-                      min="0"
-                      max="2"
-                      step="0.05"
-                      className="w-full accent-yellow-500"
-                      value={selectedObj.celestialProps.rayExposure ?? 0.6}
-                      onChange={(e) => updateObject(selectedObj.id, {
-                        celestialProps: { ...selectedObj.celestialProps!, rayExposure: parseFloat(e.target.value) }
-                      })}
-                    />
-                    <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                      {(selectedObj.celestialProps.rayExposure ?? 0.6).toFixed(2)}
-                    </span>
-                  </div>
+              {/* Custom Celestial Surface Texture */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Surface Texture</span>
+                <input
+                  type="text"
+                  className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded text-[11px] font-mono outline-none focus:border-accent"
+                  placeholder="e.g. /sun_texture.png"
+                  value={selectedObj.textureUrl || ''}
+                  onChange={(e) => updateObject(selectedObj.id, { textureUrl: e.target.value })}
+                />
+              </div>
+
+              {/* Core Disk Radius & Glow */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                <span className="text-[11px] text-text-secondary font-medium">Core Disk Scale</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="50"
+                    max="1000"
+                    step="10"
+                    className="w-full accent-amber-500"
+                    value={selectedObj.coreDiskRadius ?? 280}
+                    onChange={(e) => updateObject(selectedObj.id, { coreDiskRadius: parseInt(e.target.value) })}
+                  />
+                  <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                    {selectedObj.coreDiskRadius ?? 280}px
+                  </span>
                 </div>
-              </>
-            )}
+              </div>
+            </div>
           </Section>
+
+          {/* Lens Flares Manager Section inside Inspector */}
+          <Section title="Lens Flares Manager" icon={Sun} colorClass="text-amber-400">
+            <div className="space-y-3">
+              <div className="space-y-2 pb-2 border-b border-border/40">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                      checked={environment.lensFlareEnabled !== false}
+                      onChange={(e) => updateEnvironment({ lensFlareEnabled: e.target.checked })}
+                    />
+                    <span className="text-xs text-text-primary font-medium">Lens Flares Enabled</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newLayer = {
+                        id: `layer-${Date.now()}`,
+                        name: `Flare Layer ${lensFlareLayers.length + 1}`,
+                        enabled: true,
+                        textureUrl: '/Lens_flares_001-clearcut.png',
+                        sunTextureUrl: '/Lens_flares_001-clearcut.png',
+                        moonTextureUrl: '/moon flare.png',
+                        autoSwitch: true,
+                        offsetX: 0,
+                        offsetY: 0,
+                        scale: 3600,
+                        opacity: 0.8,
+                      };
+                      updateEnvironment({ lensFlareLayers: [...lensFlareLayers, newLayer] });
+                      toast.success('Layer Added', 'New Lens Flare layer created.');
+                    }}
+                    className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded text-[10px] font-bold transition-all flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus size={12} /> Add Layer
+                  </button>
+                </div>
+              </div>
+
+              {environment.lensFlareEnabled !== false && (
+                <div className="space-y-2.5 mt-2">
+                  {lensFlareLayers.map((layer: any, idx: number) => {
+                    const sunPickerKey = `lensFlareSun_${idx}`;
+                    const isPickingSun = isPickingAsset && activePickerTarget === sunPickerKey;
+
+                    return (
+                      <div key={layer.id || idx} className="p-2.5 bg-bg-deep border border-border rounded-lg space-y-2.5 relative">
+                        <div className="flex items-center justify-between pb-1 border-b border-border/40">
+                          <span className="text-[10px] font-bold text-text-primary uppercase tracking-wider">
+                            Layer {idx + 1}: {layer.name || 'Flare Layer'}
+                          </span>
+                          {lensFlareLayers.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = lensFlareLayers.filter((_, i) => i !== idx);
+                                updateEnvironment({ lensFlareLayers: updated });
+                              }}
+                              className="text-text-secondary hover:text-rose-400 transition-colors p-0.5 cursor-pointer"
+                              title="Remove Layer"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* ☀️ Flare Texture Picker */}
+                        <div className="space-y-1">
+                          <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                            <span className="text-[10px] text-amber-300 font-medium">Flare Texture</span>
+                            <select
+                              className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[10px] text-text-primary outline-none cursor-pointer"
+                              value={layer.sunTextureUrl || layer.textureUrl || '/Lens_flares_001-clearcut.png'}
+                              onChange={(e) => {
+                                const updated = [...lensFlareLayers];
+                                updated[idx] = {
+                                  ...updated[idx],
+                                  sunTextureUrl: e.target.value,
+                                  textureUrl: e.target.value,
+                                };
+                                updateEnvironment({ lensFlareLayers: updated });
+                              }}
+                            >
+                              {SUN_LENS_FLARES.map((flare) => (
+                                <option key={flare.url} value={flare.url}>
+                                  {flare.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isPickingSun) {
+                                setIsPickingAsset(false);
+                                setActivePickerTarget(null);
+                              } else {
+                                setIsPickingAsset(true);
+                                setActivePickerTarget(sunPickerKey);
+                              }
+                            }}
+                            className={`w-full py-1 px-2 text-[9px] font-medium rounded flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                              isPickingSun
+                                ? 'bg-amber-500/20 border border-amber-500/50 text-amber-300 animate-pulse'
+                                : 'bg-bg-surface hover:bg-bg-highlight border border-border text-text-secondary'
+                            }`}
+                          >
+                            <Folder size={10} />
+                            <span>{isPickingSun ? 'Selecting Flare in Content Browser...' : 'Assign Custom Flare Texture'}</span>
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                          <span className="text-[10px] text-text-secondary">Offset X / Y</span>
+                          <div className="grid grid-cols-2 gap-1">
+                            <input
+                              type="range"
+                              min="-1"
+                              max="1"
+                              step="0.01"
+                              className="w-full accent-amber-400"
+                              value={layer.offsetX ?? -0.06}
+                              onChange={(e) => {
+                                const updated = [...lensFlareLayers];
+                                updated[idx] = { ...updated[idx], offsetX: parseFloat(e.target.value) };
+                                updateEnvironment({ lensFlareLayers: updated });
+                              }}
+                            />
+                            <input
+                              type="range"
+                              min="-1"
+                              max="1"
+                              step="0.01"
+                              className="w-full accent-amber-400"
+                              value={layer.offsetY ?? 0.05}
+                              onChange={(e) => {
+                                const updated = [...lensFlareLayers];
+                                updated[idx] = { ...updated[idx], offsetY: parseFloat(e.target.value) };
+                                updateEnvironment({ lensFlareLayers: updated });
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                          <span className="text-[10px] text-text-secondary">Scale & Opacity</span>
+                          <div className="grid grid-cols-2 gap-1">
+                            <input
+                              type="range"
+                              min="100"
+                              max="10000"
+                              step="100"
+                              className="w-full accent-amber-400"
+                              value={layer.scale ?? 3600}
+                              onChange={(e) => {
+                                const updated = [...lensFlareLayers];
+                                updated[idx] = { ...updated[idx], scale: parseFloat(e.target.value) };
+                                updateEnvironment({ lensFlareLayers: updated });
+                              }}
+                            />
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.05"
+                              className="w-full accent-amber-400"
+                              value={layer.opacity ?? 1.0}
+                              onChange={(e) => {
+                                const updated = [...lensFlareLayers];
+                                updated[idx] = { ...updated[idx], opacity: parseFloat(e.target.value) };
+                                updateEnvironment({ lensFlareLayers: updated });
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </Section>
+          </>
         )}
 
         {/* Transform Group */}
@@ -2234,25 +2900,69 @@ export default function InspectorPanel() {
                   )}
 
                   <div className="h-px bg-border my-2" />
-                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-                    <span className="text-[11px] text-text-secondary">Mass (kg)</span>
-                    <div className="flex items-center gap-2">
+                  <div 
+                    className="grid grid-cols-[80px_1fr] items-start gap-2 cursor-help"
+                    title="Weight of object (in kg or lbs). Controls gravity force, inertia, and fluid displacement depth."
+                  >
+                    <div className="flex flex-col gap-1.5 pt-1 w-full">
+                      <span className="text-[11px] text-text-secondary border-b border-dotted border-text-secondary/40 w-max hover:border-accent hover:text-text-primary transition-colors">Mass</span>
+                      <div className="flex items-center bg-bg-deep border border-border/80 rounded p-0.5 select-none w-max">
+                        <button
+                          type="button"
+                          onClick={() => setMassUnit('kg')}
+                          className={`px-1 py-0.5 text-[9px] font-bold rounded transition-colors cursor-pointer border-none ${
+                            massUnit === 'kg'
+                              ? 'bg-accent text-white shadow-xs'
+                              : 'text-text-secondary hover:text-text-primary bg-transparent'
+                          }`}
+                          title="Switch to Kilograms (kg)"
+                        >
+                          kg
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setMassUnit('lbs')}
+                          className={`px-1 py-0.5 text-[9px] font-bold rounded transition-colors cursor-pointer border-none ${
+                            massUnit === 'lbs'
+                              ? 'bg-accent text-white shadow-xs'
+                              : 'text-text-secondary hover:text-text-primary bg-transparent'
+                          }`}
+                          title="Switch to Pounds (lbs)"
+                        >
+                          lbs
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 pt-1">
                       <input
                         type="number"
-                        step="0.1"
+                        step={massUnit === 'kg' ? '0.1' : '0.2'}
                         min="0.1"
                         className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-[4px] font-mono text-[11px] focus:border-accent focus:outline-none disabled:opacity-50"
-                        value={selectedObj.physicsMass ?? 1}
-                        disabled={selectedObj.physics === 'fixed' || isPlaying}
-                        onChange={(e) =>
-                          updateObject(selectedObj.id, { physicsMass: Math.max(0.1, parseFloat(e.target.value) || 1) })
+                        value={
+                          massUnit === 'kg'
+                            ? (selectedObj.physicsMass ?? 1)
+                            : parseFloat(((selectedObj.physicsMass ?? 1) * 2.20462).toFixed(2))
                         }
+                        disabled={selectedObj.physics === 'fixed' || isPlaying}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          if (isNaN(val)) return;
+                          const massKg = massUnit === 'kg' ? Math.max(0.1, val) : Math.max(0.05, val / 2.20462);
+                          updateObject(selectedObj.id, { physicsMass: parseFloat(massKg.toFixed(3)) });
+                        }}
                       />
+                      <span className="text-[10px] font-mono text-text-tertiary select-none w-6 text-right">
+                        {massUnit}
+                      </span>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-                    <span className="text-[11px] text-text-secondary">Bounciness</span>
+                  <div 
+                    className="grid grid-cols-[80px_1fr] items-center gap-2 cursor-help"
+                    title="Restitution coefficient (0.0 to 2.0). Higher values retain kinetic energy and cause springy bounces on impact."
+                  >
+                    <span className="text-[11px] text-text-secondary border-b border-dotted border-text-secondary/40 w-max hover:border-accent hover:text-text-primary transition-colors">Bounciness</span>
                     <div className="flex items-center gap-2">
                       <input
                         type="range"
@@ -2262,9 +2972,7 @@ export default function InspectorPanel() {
                         className="w-full accent-orange-400 disabled:opacity-50"
                         value={selectedObj.physicsRestitution ?? 0}
                         disabled={isPlaying}
-                        onChange={(e) =>
-                          updateObject(selectedObj.id, { physicsRestitution: parseFloat(e.target.value) })
-                        }
+                        onChange={(e) => updateObject(selectedObj.id, { physicsRestitution: parseFloat(e.target.value) })}
                       />
                       <span className="w-8 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
                         {(selectedObj.physicsRestitution ?? 0).toFixed(1)}
@@ -2272,8 +2980,11 @@ export default function InspectorPanel() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-                    <span className="text-[11px] text-text-secondary">Friction</span>
+                  <div 
+                    className="grid grid-cols-[80px_1fr] items-center gap-2 cursor-help"
+                    title="Surface resistance (0.0 to 2.0). Higher values prevent sliding against other objects or terrain."
+                  >
+                    <span className="text-[11px] text-text-secondary border-b border-dotted border-text-secondary/40 w-max hover:border-accent hover:text-text-primary transition-colors">Friction</span>
                     <div className="flex items-center gap-2">
                       <input
                         type="range"
@@ -2296,213 +3007,1049 @@ export default function InspectorPanel() {
           </Section>
         )}
 
-        {selectedObj.characterActions && (
-          <Section title="Character Actions" icon={Activity} colorClass="text-rose-500">
+        {(selectedObj.type === 'SUN' || selectedObj.type === 'MOON' || selectedObj.id === 'sun-light' || selectedObj.id === 'moon-light') && (
+          <Section title="Celestial Properties & Texture" icon={Sun} colorClass="text-amber-400">
             <div className="space-y-3">
-              {/* Toggles grid */}
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                    checked={selectedObj.characterActions.autoJump === true}
-                    onChange={(e) =>
-                      updateObject(selectedObj.id, {
-                        characterActions: { ...selectedObj.characterActions!, autoJump: e.target.checked },
-                      })
-                    }
-                  />
-                  <span className="text-[11px] text-text-primary">Auto Jump</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                    checked={selectedObj.characterActions.doubleJump === true}
-                    onChange={(e) =>
-                      updateObject(selectedObj.id, {
-                        characterActions: { ...selectedObj.characterActions!, doubleJump: e.target.checked },
-                      })
-                    }
-                  />
-                  <span className="text-[11px] text-text-primary">Double Jump</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                    checked={selectedObj.characterActions.sprintEnabled === true}
-                    onChange={(e) =>
-                      updateObject(selectedObj.id, {
-                        characterActions: { ...selectedObj.characterActions!, sprintEnabled: e.target.checked },
-                      })
-                    }
-                  />
-                  <span className="text-[11px] text-text-primary">Sprint</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                    checked={selectedObj.characterActions.crouchEnabled === true}
-                    onChange={(e) =>
-                      updateObject(selectedObj.id, {
-                        characterActions: { ...selectedObj.characterActions!, crouchEnabled: e.target.checked },
-                      })
-                    }
-                  />
-                  <span className="text-[11px] text-text-primary">Crouch</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                    checked={selectedObj.characterActions.dashEnabled === true}
-                    onChange={(e) =>
-                      updateObject(selectedObj.id, {
-                        characterActions: { ...selectedObj.characterActions!, dashEnabled: e.target.checked },
-                      })
-                    }
-                  />
-                  <span className="text-[11px] text-text-primary">Dash / Dodge</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                    checked={selectedObj.characterActions.autoClimb === true}
-                    onChange={(e) =>
-                      updateObject(selectedObj.id, {
-                        characterActions: { ...selectedObj.characterActions!, autoClimb: e.target.checked },
-                      })
-                    }
-                  />
-                  <span className="text-[11px] text-text-primary">Auto-Climb</span>
-                </label>
+              {/* Voxel Sun / Moon Type Dropdown */}
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2 pb-2 border-b border-border/40">
+                <span className="text-[11px] text-text-secondary font-medium">Voxel Type</span>
+                <select
+                  className="bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-md w-full font-mono text-[11px] focus:border-amber-400 outline-none cursor-pointer"
+                  value={selectedObj.voxelCelestialType || 'sphere'}
+                  onChange={(e) => updateObject(selectedObj.id, { voxelCelestialType: e.target.value as any })}
+                >
+                  <option value="sphere">🌐 Classic Round Sphere</option>
+                  <option value="cube">🧊 Voxel Block (Cubic)</option>
+                  <option value="diamond">💎 Voxel Octahedron Diamond</option>
+                  <option value="pixel_ring">🔳 Pixelated Celestial Disc (Solid)</option>
+                </select>
               </div>
 
-              {selectedObj.characterActions.dashEnabled && (
-                <>
-                  <div className="h-px bg-border my-2" />
-                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-                    <span className="text-[11px] text-text-secondary">Dash Dist</span>
-                    <div className="flex items-center gap-2">
+              <div className="flex flex-col gap-2">
+                <label className="text-xs text-text-secondary font-medium">Surface Texture</label>
+
+                {/* Current Texture Preview & Clear */}
+                {selectedObj.textureUrl ? (
+                  <div className="flex items-center gap-2 bg-bg-deep p-2 rounded-lg border border-border">
+                    <img src={selectedObj.textureUrl} className="w-8 h-8 rounded object-cover border border-border shrink-0" alt="Celestial Texture" />
+                    <span className="text-xs text-text-primary truncate flex-1 font-mono">
+                      {selectedObj.textureName || selectedObj.textureUrl.split(/[/\\]/).pop() || 'Custom Texture'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => updateObject(selectedObj.id, { textureUrl: null, textureName: null })}
+                      className="text-xs text-rose-400 hover:text-rose-300 transition-colors px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 rounded border border-rose-500/30 cursor-pointer shrink-0"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-text-secondary/60 italic mb-1">Using default procedural shader</div>
+                )}
+
+                {/* Dedicated Sun Optical Lens Flare Preset Quick Picker */}
+                {(() => {
+                  const isMoonObj = selectedObj.type === 'MOON' || selectedObj.id === 'moon-light';
+                  if (isMoonObj) return null;
+                  const flaresList = SUN_LENS_FLARES;
+                  const activeLayer = (environment.lensFlareLayers || []).find((l: any) => l.targetCelestial === 'sun' || l.targetCelestial === 'auto');
+
+                  return (
+                    <div className="pt-2 border-t border-border/40 space-y-1.5">
+                      <label className="text-[11px] text-text-secondary font-medium block">☀️ Sun Optical Lens Flare</label>
+                      <select
+                        className="w-full bg-bg-surface border border-border rounded px-2 py-1 text-xs text-text-primary outline-none cursor-pointer"
+                        value={activeLayer?.textureUrl || flaresList[0].url}
+                        onChange={(e) => {
+                          const newUrl = e.target.value;
+                          const currentLayers = [...(environment.lensFlareLayers || [])];
+                          const existingIdx = currentLayers.findIndex((l: any) => l.targetCelestial === 'sun');
+
+                          if (existingIdx >= 0) {
+                            currentLayers[existingIdx] = {
+                              ...currentLayers[existingIdx],
+                              textureUrl: newUrl,
+                              targetCelestial: 'sun',
+                            };
+                          } else {
+                            currentLayers.push({
+                              id: `layer-${Date.now()}`,
+                              name: 'Sun Flare',
+                              enabled: true,
+                              textureUrl: newUrl,
+                              offsetX: -0.06,
+                              offsetY: 0.05,
+                              scale: 3600,
+                              opacity: 1.0,
+                              targetCelestial: 'sun',
+                            });
+                          }
+                          updateEnvironment({ lensFlareLayers: currentLayers });
+                          toast.success('Flare Assigned', 'Assigned flare preset to Sun.');
+                        }}
+                      >
+                        {flaresList.map((f) => (
+                          <option key={f.url} value={f.url}>
+                            {f.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })()}
+
+                {/* Button to Open Content Browser / Asset Vault Picker */}
+                {(() => {
+                  const isPickingThis = isPickingAsset && activePickerTarget === 'celestialTexture';
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isPickingThis) {
+                          setIsPickingAsset(false);
+                          setActivePickerTarget(null);
+                        } else {
+                          setIsPickingAsset(true);
+                          setActivePickerTarget('celestialTexture');
+                        }
+                      }}
+                      className={`w-full py-2 px-3 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                        isPickingThis
+                          ? 'bg-amber-500/20 border border-amber-500/50 text-amber-300 animate-pulse'
+                          : 'bg-accent hover:bg-accent/90 text-white shadow-md'
+                      }`}
+                    >
+                      <Folder size={14} />
+                      <span>{isPickingThis ? 'Select Texture in Content Browser...' : selectedObj.textureUrl ? 'Change Texture from Assets' : 'Assign Texture from Assets'}</span>
+                    </button>
+                  );
+                })()}
+
+                {/* Texture Offset X / Y Controls */}
+                <div className="grid grid-cols-[90px_1fr] items-center gap-2 pt-3 border-t border-border/40">
+                  <span className="text-[11px] text-text-secondary font-medium">Offset X / Y</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-mono text-text-secondary">X</span>
                       <input
                         type="range"
-                        min="1"
-                        max="20"
-                        step="0.5"
-                        className="w-full accent-rose-500"
-                        value={selectedObj.characterActions.dashDistance ?? 5.0}
-                        onChange={(e) =>
-                          updateObject(selectedObj.id, {
-                            characterActions: {
-                              ...selectedObj.characterActions!,
-                              dashDistance: parseFloat(e.target.value),
-                            },
-                          })
-                        }
+                        min="-1.0"
+                        max="1.0"
+                        step="0.01"
+                        className="w-full accent-amber-400"
+                        value={selectedObj.offsetX ?? 0}
+                        onChange={(e) => updateObject(selectedObj.id, { offsetX: parseFloat(e.target.value) })}
                       />
-                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                        {(selectedObj.characterActions.dashDistance ?? 5.0).toFixed(1)}m
+                      <span className="w-8 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.offsetX ?? 0).toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-mono text-text-secondary">Y</span>
+                      <input
+                        type="range"
+                        min="-1.0"
+                        max="1.0"
+                        step="0.01"
+                        className="w-full accent-amber-400"
+                        value={selectedObj.offsetY ?? 0}
+                        onChange={(e) => updateObject(selectedObj.id, { offsetY: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-8 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.offsetY ?? 0).toFixed(2)}
                       </span>
                     </div>
                   </div>
+                </div>
 
-                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-                    <span className="text-[11px] text-text-secondary">Cooldown</span>
-                    <div className="flex items-center gap-2">
+                {/* Tiling (Repeat X / Y) Controls */}
+                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                  <span className="text-[11px] text-text-secondary font-medium">Tiling X / Y</span>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-mono text-text-secondary">X</span>
                       <input
                         type="range"
                         min="0.1"
-                        max="5"
+                        max="10.0"
                         step="0.1"
-                        className="w-full accent-rose-500"
-                        value={selectedObj.characterActions.dashCooldown ?? 1.0}
+                        className="w-full accent-amber-400"
+                        value={selectedObj.repeatX ?? 1}
+                        onChange={(e) => updateObject(selectedObj.id, { repeatX: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-8 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.repeatX ?? 1).toFixed(1)}x
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-mono text-text-secondary">Y</span>
+                      <input
+                        type="range"
+                        min="0.1"
+                        max="10.0"
+                        step="0.1"
+                        className="w-full accent-amber-400"
+                        value={selectedObj.repeatY ?? 1}
+                        onChange={(e) => updateObject(selectedObj.id, { repeatY: parseFloat(e.target.value) })}
+                      />
+                      <span className="w-8 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.repeatY ?? 1).toFixed(1)}x
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Texture Rotation Control */}
+                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                  <span className="text-[11px] text-text-secondary font-medium">Rotation</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      step="1"
+                      className="w-full accent-amber-400"
+                      value={selectedObj.textureRotation ?? 0}
+                      onChange={(e) => updateObject(selectedObj.id, { textureRotation: parseInt(e.target.value) })}
+                    />
+                    <span className="w-10 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                      {selectedObj.textureRotation ?? 0}°
+                    </span>
+                  </div>
+                </div>
+
+                {/* Texture Opacity Control */}
+                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                  <span className="text-[11px] text-text-secondary font-medium">Texture Opacity</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="1.0"
+                      step="0.05"
+                      className="w-full accent-amber-400"
+                      value={selectedObj.textureOpacity ?? (selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 0.85 : 1.0)}
+                      onChange={(e) => updateObject(selectedObj.id, { textureOpacity: parseFloat(e.target.value) })}
+                    />
+                    <span className="w-10 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                      {(selectedObj.textureOpacity ?? (selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 0.85 : 1.0)).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Core Disk Radius Control */}
+                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                  <span className="text-[11px] text-text-secondary font-medium">Core Disk Radius</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="100"
+                      max="1000"
+                      step="10"
+                      className="w-full accent-amber-400"
+                      value={selectedObj.coreDiskRadius ?? (selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 180 : 280)}
+                      onChange={(e) => updateObject(selectedObj.id, { coreDiskRadius: parseInt(e.target.value) })}
+                    />
+                    <span className="w-10 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                      {selectedObj.coreDiskRadius ?? (selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 180 : 280)}px
+                    </span>
+                  </div>
+                </div>
+
+                {/* Glow Intensity Control */}
+                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                  <span className="text-[11px] text-text-secondary font-medium">Glow Brightness</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="4.0"
+                      step="0.05"
+                      className="w-full accent-amber-400"
+                      value={selectedObj.glowIntensity ?? (selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 0.8 : 1.0)}
+                      onChange={(e) => updateObject(selectedObj.id, { glowIntensity: parseFloat(e.target.value) })}
+                    />
+                    <span className="w-10 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                      {(selectedObj.glowIntensity ?? (selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 0.8 : 1.0)).toFixed(2)}x
+                    </span>
+                  </div>
+                </div>
+
+                {/* Glow Edge Softness Control */}
+                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                  <span className="text-[11px] text-text-secondary font-medium">Glow Softness</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="1.0"
+                      max="5.0"
+                      step="0.1"
+                      className="w-full accent-amber-400"
+                      value={selectedObj.glowExponent ?? (selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 2.2 : 2.8)}
+                      onChange={(e) => updateObject(selectedObj.id, { glowExponent: parseFloat(e.target.value) })}
+                    />
+                    <span className="w-10 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                      {(selectedObj.glowExponent ?? (selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 2.2 : 2.8)).toFixed(1)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Mesh Rotation (Y-Axis) — rotate the sphere itself to hide texture seams */}
+                <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                  <span className="text-[11px] text-text-secondary font-medium">Mesh Rotation</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      step="1"
+                      className="w-full accent-amber-400"
+                      value={selectedObj.meshRotationY ?? 0}
+                      onChange={(e) => updateObject(selectedObj.id, { meshRotationY: parseInt(e.target.value) })}
+                    />
+                    <span className="w-10 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                      {selectedObj.meshRotationY ?? 0}°
+                    </span>
+                  </div>
+                </div>
+
+                {/* Reset Alignment Button */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateObject(selectedObj.id, {
+                        offsetX: 0,
+                        offsetY: 0,
+                        repeatX: 1,
+                        repeatY: 1,
+                        textureRotation: 0,
+                        meshRotationY: 0,
+                        textureOpacity: selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 0.85 : 1.0,
+                        coreDiskRadius: selectedObj.type === 'MOON' || selectedObj.id === 'moon-light' ? 180 : 280,
+                      });
+                      toast.success('Alignment Reset', 'Texture alignment, opacity, and radius reset to defaults.');
+                    }}
+                    className="w-full py-1.5 px-3 text-[11px] font-medium rounded-md bg-bg-deep hover:bg-neutral-800 border border-border hover:border-amber-500/40 text-text-secondary hover:text-amber-300 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <RotateCcw size={12} />
+                    <span>Reset Alignment & Tiling</span>
+                  </button>
+                </div>
+
+                {/* Celestial Glow & Color Controls */}
+                <div className="pt-3 border-t border-border/40 space-y-2">
+                  <div className="text-[10px] font-semibold tracking-wider text-amber-400/80 uppercase">
+                    Light & Surface Glow
+                  </div>
+                  
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Light Tint</span>
+                    <div className="relative w-full h-7 rounded border border-border overflow-hidden">
+                      <input
+                        type="color"
+                        className="absolute -top-2 -left-2 w-16 h-16 cursor-pointer"
+                        value={selectedObj.lightProps?.color || (selectedObj.type === 'SUN' ? '#fff7ed' : '#e2e8f0')}
                         onChange={(e) =>
                           updateObject(selectedObj.id, {
-                            characterActions: {
-                              ...selectedObj.characterActions!,
-                              dashCooldown: parseFloat(e.target.value),
+                            lightProps: {
+                              lightType: 'directional',
+                              color: e.target.value,
+                              intensity: selectedObj.lightProps?.intensity ?? (selectedObj.type === 'SUN' ? 2.8 : 0.4),
+                              distance: selectedObj.lightProps?.distance ?? 1000,
                             },
                           })
                         }
                       />
-                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
-                        {(selectedObj.characterActions.dashCooldown ?? 1.0).toFixed(1)}s
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Glow Intensity</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0"
+                        max="5"
+                        step="0.1"
+                        className="w-full accent-amber-400"
+                        value={selectedObj.lightProps?.intensity ?? (selectedObj.type === 'SUN' ? 2.8 : 0.4)}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            lightProps: {
+                              lightType: 'directional',
+                              color: selectedObj.lightProps?.color || (selectedObj.type === 'SUN' ? '#fff7ed' : '#e2e8f0'),
+                              intensity: parseFloat(e.target.value),
+                              distance: selectedObj.lightProps?.distance ?? 1000,
+                            },
+                          })
+                        }
+                      />
+                      <span className="w-8 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.lightProps?.intensity ?? (selectedObj.type === 'SUN' ? 2.8 : 0.4)).toFixed(1)}
                       </span>
                     </div>
                   </div>
-                </>
-              )}
+                </div>
+              </div>
+            </div>
+          </Section>
+        )}
 
-              <div className="h-px bg-border my-2" />
+        {isStarterPlayer && (
+          <Section title="Character Controller & Camera" icon={Activity} colorClass="text-rose-500">
+            <div className="space-y-3.5">
+              {/* 1. CAMERA & VIEWPORT */}
+              <div>
+                <div className="text-[10px] font-semibold tracking-wider text-text-secondary/70 uppercase mb-2">
+                  Camera & Viewport
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2" title="Active gameplay camera mode during simulation.">
+                    <span className="text-[11px] text-text-secondary">Camera Mode</span>
+                    <select
+                      className="w-full bg-bg-deep border border-border rounded px-2 py-1 text-xs text-text-primary focus:border-accent outline-none font-sans"
+                      value={environment.cameraMode || 'third-person'}
+                      onChange={(e) => updateEnvironment({ cameraMode: e.target.value as any })}
+                    >
+                      <option value="third-person">Third Person</option>
+                      <option value="top-down">Top Down</option>
+                      <option value="side-scroller">Side Scroller (2.5D)</option>
+                      <option value="moba">MOBA / RTS (Free Orbit & Pan)</option>
+                    </select>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex items-center gap-2 cursor-pointer select-none col-span-2">
-                  <input
-                    type="checkbox"
-                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
-                    checked={selectedObj.characterActions.footstepAudioEnabled === true}
-                    onChange={(e) =>
-                      updateObject(selectedObj.id, {
-                        characterActions: {
-                          ...selectedObj.characterActions!,
-                          footstepAudioEnabled: e.target.checked,
-                        },
-                      })
-                    }
-                  />
-                  <span className="text-[11px] text-text-primary">Footstep Audio</span>
-                </label>
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <span className="text-[11px] text-text-secondary">Mouse Wheel Zoom</span>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                        checked={targetActions.cameraZoomEnabled !== false}
+                        onChange={(e) =>
+                          updateObject(targetPlayerObj.id, {
+                            characterActions: { ...targetActions, cameraZoomEnabled: e.target.checked },
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  {targetActions.cameraZoomEnabled !== false && (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="flex justify-between items-center text-[10px] text-text-secondary">
+                        <span>Zoom Distance Range</span>
+                        <span className="font-mono text-text-primary">
+                          {(targetActions.minCameraDistance ?? 2.0).toFixed(1)}m - {(targetActions.maxCameraDistance ?? 15.0).toFixed(1)}m
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div title="Min Zoom (closest distance)">
+                          <input
+                            type="range"
+                            min="0.5"
+                            max="10"
+                            step="0.5"
+                            className="w-full accent-rose-500 cursor-pointer"
+                            value={targetActions.minCameraDistance ?? 2.0}
+                            onChange={(e) =>
+                              updateObject(targetPlayerObj.id, {
+                                characterActions: {
+                                  ...targetActions,
+                                  minCameraDistance: parseFloat(e.target.value),
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                        <div title="Max Zoom (furthest distance)">
+                          <input
+                            type="range"
+                            min="5"
+                            max="50"
+                            step="1"
+                            className="w-full accent-rose-500 cursor-pointer"
+                            value={targetActions.maxCameraDistance ?? 15.0}
+                            onChange={(e) =>
+                              updateObject(targetPlayerObj.id, {
+                                characterActions: {
+                                  ...targetActions,
+                                  maxCameraDistance: parseFloat(e.target.value),
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {selectedObj.characterActions.footstepAudioEnabled && (
-                <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-                  <span className="text-[11px] text-text-secondary">Sample Path</span>
-                  <div className="flex gap-1.5 items-center w-full">
-                    {(() => {
-                      const footstepPath = selectedObj.characterActions.footstepAudioUrl || selectedObj.characterActions.footstepAudioPath || '';
-                      const footstepAsset = assets.find((a) => a.id === footstepPath || a.url === footstepPath);
-                      const footstepFileName = footstepAsset ? footstepAsset.name : (footstepPath ? footstepPath.split(/[/\\]/).pop() || 'None' : 'None');
-                      const isPickingThis = isPickingAsset && activePickerTarget === 'footstepAudioPath';
-                      return (
-                        <>
-                          <div
-                            className="flex-1 bg-bg-deep/50 border border-border/40 text-text-secondary px-2.5 py-1.5 rounded-[4px] text-[11px] font-mono truncate select-all cursor-default min-w-0"
-                            title={footstepPath || 'No sound linked'}
-                          >
-                            {footstepFileName}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (isPickingThis) {
-                                setIsPickingAsset(false);
-                                setActivePickerTarget(null);
-                              } else {
-                                setIsPickingAsset(true);
-                                setActivePickerTarget('footstepAudioPath');
-                              }
-                            }}
-                            className={`px-2.5 py-1.5 rounded-[4px] border transition-all flex items-center justify-center gap-1.5 shrink-0 cursor-pointer text-[11px] font-medium ${
-                              isPickingThis
-                                ? 'bg-accent text-white border-accent shadow-[0_0_12px_rgba(56,189,248,0.5)] animate-pulse'
-                                : 'bg-bg-deep border-border text-text-secondary hover:text-text-primary hover:border-text-secondary'
-                            }`}
-                            title={isPickingThis ? 'Click to cancel picking' : 'Assign from Browser'}
-                          >
-                            <Folder size={12} />
-                            <span>{isPickingThis ? 'Picking...' : 'Assign'}</span>
-                          </button>
-                        </>
-                      );
-                    })()}
+              <div className="h-px bg-border/60 my-2" />
+
+              {/* 2. LOCOMOTION & SPEED */}
+              <div>
+                <div className="text-[10px] font-semibold tracking-wider text-text-secondary/70 uppercase mb-2">
+                  Locomotion
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div title="Base walking movement speed (m/s).">
+                    <label className="text-[10px] text-text-secondary block mb-1">Walk Speed</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.5"
+                      max="50"
+                      className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-[4px] font-mono text-[11px] focus:border-accent focus:outline-none"
+                      value={targetPlayerObj.walkSpeed ?? 5.0}
+                      onChange={(e) => updateObject(targetPlayerObj.id, { walkSpeed: parseFloat(e.target.value) || 5.0 })}
+                    />
+                  </div>
+                  <div title="Sprint movement speed when holding Shift (m/s).">
+                    <label className="text-[10px] text-text-secondary block mb-1">Run Speed</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="1"
+                      max="100"
+                      className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-[4px] font-mono text-[11px] focus:border-accent focus:outline-none"
+                      value={targetPlayerObj.runSpeed ?? 10.0}
+                      onChange={(e) => updateObject(targetPlayerObj.id, { runSpeed: parseFloat(e.target.value) || 10.0 })}
+                    />
+                  </div>
+                  <div className="col-span-2" title="Vertical launch velocity applied when jumping (Spacebar).">
+                    <label className="text-[10px] text-text-secondary block mb-1">Jump Power</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="1"
+                      max="100"
+                      className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded-[4px] font-mono text-[11px] focus:border-accent focus:outline-none"
+                      value={targetPlayerObj.jumpHeight ?? 15.0}
+                      onChange={(e) => updateObject(targetPlayerObj.id, { jumpHeight: parseFloat(e.target.value) || 15.0 })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-px bg-border/60 my-2" />
+
+              {/* 3. ABILITIES & ACTIONS */}
+              <div>
+                <div className="text-[10px] font-semibold tracking-wider text-text-secondary/70 uppercase mb-2">
+                  Abilities & Actions
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                      checked={targetActions.sprintEnabled === true}
+                      onChange={(e) =>
+                        updateObject(targetPlayerObj.id, {
+                          characterActions: { ...targetActions, sprintEnabled: e.target.checked },
+                        })
+                      }
+                    />
+                    <span className="text-[11px] text-text-primary">Sprint</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                      checked={targetActions.crouchEnabled === true}
+                      onChange={(e) =>
+                        updateObject(targetPlayerObj.id, {
+                          characterActions: { ...targetActions, crouchEnabled: e.target.checked },
+                        })
+                      }
+                    />
+                    <span className="text-[11px] text-text-primary">Crouch</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                      checked={targetActions.dashEnabled === true}
+                      onChange={(e) =>
+                        updateObject(targetPlayerObj.id, {
+                          characterActions: { ...targetActions, dashEnabled: e.target.checked },
+                        })
+                      }
+                    />
+                    <span className="text-[11px] text-text-primary">Dash / Dodge</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                      checked={targetActions.doubleJump === true}
+                      onChange={(e) =>
+                        updateObject(targetPlayerObj.id, {
+                          characterActions: { ...targetActions, doubleJump: e.target.checked },
+                        })
+                      }
+                    />
+                    <span className="text-[11px] text-text-primary">Double Jump</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                      checked={targetActions.autoJump === true}
+                      onChange={(e) =>
+                        updateObject(targetPlayerObj.id, {
+                          characterActions: { ...targetActions, autoJump: e.target.checked },
+                        })
+                      }
+                    />
+                    <span className="text-[11px] text-text-primary">Auto Jump</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                      checked={targetActions.autoClimb === true}
+                      onChange={(e) =>
+                        updateObject(targetPlayerObj.id, {
+                          characterActions: { ...targetActions, autoClimb: e.target.checked },
+                        })
+                      }
+                    />
+                    <span className="text-[11px] text-text-primary">Auto-Climb</span>
+                  </label>
+                </div>
+
+                {targetActions.dashEnabled && (
+                  <div className="space-y-2 pt-2.5">
+                    <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                      <span className="text-[11px] text-text-secondary">Dash Dist</span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="1"
+                          max="20"
+                          step="0.5"
+                          className="w-full accent-rose-500 cursor-pointer"
+                          value={targetActions.dashDistance ?? 5.0}
+                          onChange={(e) =>
+                            updateObject(targetPlayerObj.id, {
+                              characterActions: {
+                                ...targetActions,
+                                dashDistance: parseFloat(e.target.value),
+                              },
+                            })
+                          }
+                        />
+                        <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                          {(targetActions.dashDistance ?? 5.0).toFixed(1)}m
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                      <span className="text-[11px] text-text-secondary">Cooldown</span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="5"
+                          step="0.1"
+                          className="w-full accent-rose-500 cursor-pointer"
+                          value={targetActions.dashCooldown ?? 1.0}
+                          onChange={(e) =>
+                            updateObject(targetPlayerObj.id, {
+                              characterActions: {
+                                ...targetActions,
+                                dashCooldown: parseFloat(e.target.value),
+                              },
+                            })
+                          }
+                        />
+                        <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                          {(targetActions.dashCooldown ?? 1.0).toFixed(1)}s
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="h-px bg-border/60 my-2" />
+
+              {/* 4. AUDIO FX */}
+              <div>
+                <div className="text-[10px] font-semibold tracking-wider text-text-secondary/70 uppercase mb-2">
+                  Audio FX
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-text-primary">Footstep Audio</span>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                        checked={targetActions.footstepAudioEnabled === true}
+                        onChange={(e) =>
+                          updateObject(targetPlayerObj.id, {
+                            characterActions: {
+                              ...targetActions,
+                              footstepAudioEnabled: e.target.checked,
+                            },
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+
+                  {targetActions.footstepAudioEnabled && (
+                    <div className="grid grid-cols-[80px_1fr] items-center gap-2 pt-1">
+                      <span className="text-[11px] text-text-secondary">Sample Path</span>
+                      <div className="flex gap-1.5 items-center w-full">
+                        {(() => {
+                          const footstepPath = targetActions.footstepAudioUrl || targetActions.footstepAudioPath || '';
+                          const footstepAsset = assets.find((a) => a.id === footstepPath || a.url === footstepPath);
+                          const footstepFileName = footstepAsset ? footstepAsset.name : (footstepPath ? footstepPath.split(/[/\\]/).pop() || 'None' : 'None');
+                          const isPickingThis = isPickingAsset && activePickerTarget === 'footstepAudioPath';
+                          return (
+                            <>
+                              <div
+                                className="flex-1 bg-bg-deep/50 border border-border/40 text-text-secondary px-2.5 py-1.5 rounded-[4px] text-[11px] font-mono truncate select-all cursor-default min-w-0"
+                                title={footstepPath || 'No sound linked'}
+                              >
+                                {footstepFileName}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (isPickingThis) {
+                                    setIsPickingAsset(false);
+                                    setActivePickerTarget(null);
+                                  } else {
+                                    setIsPickingAsset(true);
+                                    setActivePickerTarget('footstepAudioPath');
+                                  }
+                                }}
+                                className={`px-2.5 py-1 text-xs rounded border transition-all shrink-0 cursor-pointer ${
+                                  isPickingThis
+                                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 animate-pulse font-medium'
+                                    : 'bg-bg-surface border-border text-text-primary hover:border-accent hover:text-accent'
+                                }`}
+                              >
+                                {isPickingThis ? 'Cancel' : footstepPath ? 'Change' : 'Pick'}
+                              </button>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </Section>
+        )}
+
+        {/* SPATIAL AUDIO & SOUNDSCAPE SECTION */}
+        {selectedObj && (
+          <Section title="Spatial Audio & Soundscape" icon={Volume2} colorClass="text-emerald-400">
+            <div className="space-y-3">
+              {/* Enable / Track Audio */}
+              <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-emerald-400 focus:ring-emerald-400 bg-bg-deep w-3.5 h-3.5"
+                    checked={!!selectedObj.audioProps?.url}
+                    onChange={(e) => {
+                      if (!e.target.checked) {
+                        updateObject(selectedObj.id, {
+                          audioProps: undefined,
+                        });
+                      } else {
+                        updateObject(selectedObj.id, {
+                          audioProps: {
+                            volume: 1,
+                            loop: true,
+                            refDistance: 1,
+                            maxDistance: 50,
+                            rolloffFactor: 1,
+                            distanceModel: 'inverse',
+                            autoplay: true,
+                            sourceType: 'point',
+                            url: selectedObj.audioProps?.url || '',
+                          },
+                        });
+                      }
+                    }}
+                  />
+                  <span className="text-xs text-text-primary font-medium">Audio Source Active</span>
+                </label>
+
+                {selectedObj.audioProps?.url && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const isMuted = selectedObj.audioProps?.autoplay === false;
+                      updateObject(selectedObj.id, {
+                        audioProps: {
+                          ...selectedObj.audioProps,
+                          autoplay: isMuted,
+                        },
+                      });
+                    }}
+                    className="p-1 hover:bg-bg-deep rounded text-text-secondary hover:text-text-primary transition-colors cursor-pointer"
+                    title={selectedObj.audioProps?.autoplay === false ? 'Unmute Audio' : 'Mute Audio'}
+                  >
+                    {selectedObj.audioProps?.autoplay === false ? <VolumeX size={14} className="text-red-400" /> : <Volume2 size={14} className="text-emerald-400" />}
+                  </button>
+                )}
+              </div>
+
+              {selectedObj.audioProps && (
+                <div className="space-y-3 pt-1">
+                  {/* Audio Asset / URL Picker */}
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] text-text-secondary">Audio Clip Asset</span>
+                    <div className="flex gap-1.5 items-center w-full">
+                      {(() => {
+                        const audioUrl = selectedObj.audioProps.url || '';
+                        const audioAsset = assets.find((a) => a.id === audioUrl || a.url === audioUrl);
+                        const audioName = audioAsset ? audioAsset.name : (audioUrl ? audioUrl.split(/[/\\]/).pop() || 'Custom URL' : 'None Selected');
+                        const isPickingAudio = isPickingAsset && activePickerTarget === `audioUrl_${selectedObj.id}`;
+
+                        return (
+                          <>
+                            <div
+                              className="flex-1 bg-bg-deep/50 border border-border/40 text-text-secondary px-2.5 py-1.5 rounded-[4px] text-[11px] font-mono truncate select-all cursor-default min-w-0"
+                              title={audioUrl || 'No audio file linked'}
+                            >
+                              {audioName}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isPickingAudio) {
+                                  setIsPickingAsset(false);
+                                  setActivePickerTarget(null);
+                                } else {
+                                  setIsPickingAsset(true);
+                                  setActivePickerTarget(`audioUrl_${selectedObj.id}`);
+                                }
+                              }}
+                              className={`px-2.5 py-1 text-xs rounded border transition-all shrink-0 cursor-pointer ${
+                                isPickingAudio
+                                  ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 animate-pulse font-medium'
+                                  : 'bg-bg-surface border-border text-text-primary hover:border-accent hover:text-accent'
+                              }`}
+                            >
+                              {isPickingAudio ? 'Cancel' : audioUrl ? 'Change' : 'Pick'}
+                            </button>
+                          </>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Source Type & Falloff Model */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-text-secondary uppercase tracking-wider font-semibold">Source Type</span>
+                      <select
+                        className="w-full bg-bg-deep border border-border rounded px-2 py-1 text-xs text-text-primary outline-none cursor-pointer"
+                        value={selectedObj.audioProps.sourceType || 'point'}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            audioProps: {
+                              ...selectedObj.audioProps,
+                              sourceType: e.target.value as any,
+                            },
+                          })
+                        }
+                      >
+                        <option value="point">Point (3D Positional)</option>
+                        <option value="ambient">Ambient (Global)</option>
+                        <option value="surface">Surface</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-text-secondary uppercase tracking-wider font-semibold">Falloff Curve</span>
+                      <select
+                        className="w-full bg-bg-deep border border-border rounded px-2 py-1 text-xs text-text-primary outline-none cursor-pointer"
+                        value={selectedObj.audioProps.distanceModel || 'inverse'}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            audioProps: {
+                              ...selectedObj.audioProps,
+                              distanceModel: e.target.value as any,
+                            },
+                          })
+                        }
+                      >
+                        <option value="inverse">Inverse (Realistic)</option>
+                        <option value="linear">Linear (Constant)</option>
+                        <option value="exponential">Exponential (Sharp)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Volume Slider */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Master Volume</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        className="w-full accent-emerald-400"
+                        value={selectedObj.audioProps.volume ?? 1}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            audioProps: {
+                              ...selectedObj.audioProps,
+                              volume: parseFloat(e.target.value),
+                            },
+                          })
+                        }
+                      />
+                      <span className="w-9 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {Math.round((selectedObj.audioProps.volume ?? 1) * 100)}%
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Reference Distance (refDistance) */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-text-secondary">Ref Distance</span>
+                      <span className="text-[9px] text-text-secondary/50 font-mono">100% Vol Range</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="20"
+                        step="0.5"
+                        className="w-full accent-emerald-400"
+                        value={selectedObj.audioProps.refDistance ?? 1}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            audioProps: {
+                              ...selectedObj.audioProps,
+                              refDistance: parseFloat(e.target.value),
+                            },
+                          })
+                        }
+                      />
+                      <span className="w-9 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.audioProps.refDistance ?? 1).toFixed(1)}m
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Max Distance (maxDistance) */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-text-secondary">Max Distance</span>
+                      <span className="text-[9px] text-text-secondary/50 font-mono">Audible Limit</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="5"
+                        max="200"
+                        step="5"
+                        className="w-full accent-emerald-400"
+                        value={selectedObj.audioProps.maxDistance ?? selectedObj.audioProps.distance ?? 50}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            audioProps: {
+                              ...selectedObj.audioProps,
+                              maxDistance: parseFloat(e.target.value),
+                              distance: parseFloat(e.target.value),
+                            },
+                          })
+                        }
+                      />
+                      <span className="w-9 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {Math.round(selectedObj.audioProps.maxDistance ?? selectedObj.audioProps.distance ?? 50)}m
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Rolloff Factor (rolloffFactor) */}
+                  <div className="grid grid-cols-[90px_1fr] items-center gap-2">
+                    <div className="flex flex-col">
+                      <span className="text-[11px] text-text-secondary">Rolloff Factor</span>
+                      <span className="text-[9px] text-text-secondary/50 font-mono">Curve Slope</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="0"
+                        max="5"
+                        step="0.1"
+                        className="w-full accent-emerald-400"
+                        value={selectedObj.audioProps.rolloffFactor ?? 1}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            audioProps: {
+                              ...selectedObj.audioProps,
+                              rolloffFactor: parseFloat(e.target.value),
+                            },
+                          })
+                        }
+                      />
+                      <span className="w-9 font-mono text-[9px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.audioProps.rolloffFactor ?? 1).toFixed(1)}x
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Playback Settings Checkboxes */}
+                  <div className="flex items-center gap-4 pt-1 border-t border-border/40 text-xs">
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border text-emerald-400 focus:ring-emerald-400 bg-bg-deep w-3.5 h-3.5"
+                        checked={selectedObj.audioProps.loop !== false}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            audioProps: {
+                              ...selectedObj.audioProps,
+                              loop: e.target.checked,
+                            },
+                          })
+                        }
+                      />
+                      <span className="text-text-primary">Looping</span>
+                    </label>
+
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border text-emerald-400 focus:ring-emerald-400 bg-bg-deep w-3.5 h-3.5"
+                        checked={selectedObj.audioProps.autoplay !== false}
+                        onChange={(e) =>
+                          updateObject(selectedObj.id, {
+                            audioProps: {
+                              ...selectedObj.audioProps,
+                              autoplay: e.target.checked,
+                            },
+                          })
+                        }
+                      />
+                      <span className="text-text-primary">Autoplay</span>
+                    </label>
                   </div>
                 </div>
               )}
