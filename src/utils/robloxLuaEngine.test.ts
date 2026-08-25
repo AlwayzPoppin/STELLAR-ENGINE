@@ -186,5 +186,46 @@ Engine.CompleteObjective("quest_slay_goblins", "obj_defeat_5")
     expect(quest?.objectives[0].completed).toBe(true);
     expect(quest?.status).toBe('completed');
   });
+
+  it('should transpile complex nested tables, multi-line strings, and method colon calls with AST parser', () => {
+    const complexLua = `
+local config = {
+  name = "MegaDragon",
+  stats = {
+    hp = 5000,
+    elements = { "fire", "lightning", "plasma" },
+    nested = {
+      layer = {
+        deep = true
+      }
+    }
+  }
+}
+
+local story = [[
+Long ago in the land of Robloxia,
+the Dragon woke up.
+]]
+
+function config:GetPower(boost)
+  return self.stats.hp * boost
+end
+
+local power = config:GetPower(2)
+Engine.SetVariable("dragonPower", power)
+Engine.SetVariable("loreIntro", story)
+`;
+
+    const js = transpileRobloxLuaToJS(complexLua);
+    expect(js).toContain('__checkLoopGuard');
+    expect(js).toContain('config.GetPower = function(self, boost)');
+
+    const result = executeRobloxLuaScript(complexLua);
+    expect(result.success).toBe(true);
+
+    const vars = useStore.getState().gameVariables;
+    expect(vars['dragonPower']).toBe(10000);
+    expect(vars['loreIntro']).toContain('Long ago in the land of Robloxia');
+  });
 });
 

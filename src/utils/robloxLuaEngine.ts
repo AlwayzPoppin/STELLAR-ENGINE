@@ -1,5 +1,6 @@
 import { useStore, SceneObject } from '../store/useStore';
 import { toast } from '../store/useToastStore';
+import * as luaparse from 'luaparse';
 
 // Roblox Material to Stellar Engine Material Mapper
 const MATERIAL_MAP: Record<string, { roughness: number; metalness: number }> = {
@@ -13,8 +14,8 @@ const MATERIAL_MAP: Record<string, { roughness: number; metalness: number }> = {
   Glass: { roughness: 0.1, metalness: 0.1 },
 };
 
-function resolveGeometryFromClassName(className: string): any {
-  const lower = className.toLowerCase();
+function resolveGeometryFromClassName(className: string = 'Part'): any {
+  const lower = (typeof className === 'string' ? className : 'Part').toLowerCase();
   if (lower.includes('forearm') || lower.includes('limb') || lower.includes('arm') || lower.includes('leg') || lower.includes('calf') || lower.includes('shin')) return 'forearm';
   if (lower.includes('teardrop') || lower.includes('egg')) return 'teardrop';
   if (lower.includes('wing') || lower.includes('fin') || lower.includes('scythe')) return 'wingBlade';
@@ -187,9 +188,10 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
     };
 
     // 5. Instance Proxy Factory
-    function createInstanceProxy(className: string): any {
+    function createInstanceProxy(className: string = 'Part'): any {
+      const cls = className || 'Part';
       const id = `roblox_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const isRounded = className.toLowerCase().includes('rounded') || className.toLowerCase().includes('beveled');
+      const isRounded = cls.toLowerCase().includes('rounded') || cls.toLowerCase().includes('beveled');
 
       if (className === 'Motor6D' || className === 'Weld' || className === 'ManualWeld') {
         const motorData = {
@@ -467,8 +469,8 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
             const newObject: SceneObject = {
               id: instanceData.id,
               name: instanceData.name,
-              type: className === 'Model' || className === 'Folder' ? 'group' : 'mesh',
-              geometry: className === 'Model' || className === 'Folder' ? undefined : (instanceData.geometry as any),
+              type: cls === 'Model' || cls === 'Folder' ? 'group' : 'mesh',
+              geometry: cls === 'Model' || cls === 'Folder' ? undefined : (instanceData.geometry as any),
               bevelRadius: instanceData.bevelRadius,
               bevelSegments: instanceData.bevelSegments,
               position: [...instanceData.position],
@@ -489,7 +491,7 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
             createdObjectsList.push(newObject);
             instanceData.isPushedToStore = true;
 
-            if (className !== 'Model' && className !== 'Folder') {
+            if (cls !== 'Model' && cls !== 'Folder') {
               partsCreatedCount++;
             }
           }
@@ -540,7 +542,11 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
 
     // 7. Instance Global
     const Instance = {
-      new: (className: string, parent?: any) => {
+      new: (...args: any[]) => {
+        const className = typeof args[0] === 'string' ? args[0] : (typeof args[1] === 'string' ? args[1] : 'Part');
+        const parent = typeof args[0] === 'object' && args[0] !== null && typeof args[0].id === 'string'
+          ? args[0]
+          : (typeof args[1] === 'object' && args[1] !== null ? args[1] : args[2]);
         const p = createInstanceProxy(className);
         if (parent) p.Parent = parent;
         return p;
@@ -549,7 +555,8 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
 
     // 8. game Global
     const game = {
-      GetService: (serviceName: string) => {
+      GetService: (...args: any[]) => {
+        const serviceName = typeof args[0] === 'string' ? args[0] : args[1];
         if (serviceName === 'Workspace') return WorkspaceProxy;
         return WorkspaceProxy;
       },
@@ -699,18 +706,18 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
       },
       GetQuest: (questId: string) => {
         const state = useStore.getState();
-        return state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        return state.quests.find((q) => q.id === questId || (q.title && questId && q.title.toLowerCase() === questId.toLowerCase()));
       },
       StartQuest: (questId: string) => {
         const state = useStore.getState();
-        const quest = state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        const quest = state.quests.find((q) => q.id === questId || (q.title && questId && q.title.toLowerCase() === questId.toLowerCase()));
         if (quest) {
           state.updateQuest(quest.id, { status: 'active' });
         }
       },
       CompleteQuest: (questId: string) => {
         const state = useStore.getState();
-        const quest = state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        const quest = state.quests.find((q) => q.id === questId || (q.title && questId && q.title.toLowerCase() === questId.toLowerCase()));
         if (quest) {
           const completedObjectives = quest.objectives.map((o) => ({ ...o, completed: true, currentCount: o.targetCount }));
           state.updateQuest(quest.id, { status: 'completed', objectives: completedObjectives });
@@ -719,13 +726,13 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
       },
       CompleteObjective: (questId: string, objId: string) => {
         const state = useStore.getState();
-        const quest = state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        const quest = state.quests.find((q) => q.id === questId || (q.title && questId && q.title.toLowerCase() === questId.toLowerCase()));
         if (quest) {
           const updatedObjectives = quest.objectives.map((obj) => {
             if (
               obj.id === objId ||
-              obj.description.toLowerCase().includes(objId.toLowerCase()) ||
-              obj.targetName.toLowerCase() === objId.toLowerCase()
+              (obj.description && objId && obj.description.toLowerCase().includes(objId.toLowerCase())) ||
+              (obj.targetName && objId && obj.targetName.toLowerCase() === objId.toLowerCase())
             ) {
               return { ...obj, completed: true, currentCount: obj.targetCount };
             }
@@ -743,13 +750,13 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
       },
       UpdateObjective: (questId: string, objId: string, count: number) => {
         const state = useStore.getState();
-        const quest = state.quests.find((q) => q.id === questId || q.title.toLowerCase() === questId.toLowerCase());
+        const quest = state.quests.find((q) => q.id === questId || (q.title && questId && q.title.toLowerCase() === questId.toLowerCase()));
         if (quest) {
           const updatedObjectives = quest.objectives.map((obj) => {
             if (
               obj.id === objId ||
-              obj.description.toLowerCase().includes(objId.toLowerCase()) ||
-              obj.targetName.toLowerCase() === objId.toLowerCase()
+              (obj.description && objId && obj.description.toLowerCase().includes(objId.toLowerCase())) ||
+              (obj.targetName && objId && obj.targetName.toLowerCase() === objId.toLowerCase())
             ) {
               const newCount = Math.max(0, count);
               return { ...obj, currentCount: newCount, completed: newCount >= obj.targetCount };
@@ -927,15 +934,312 @@ function traverseSceneGraphNode(node: any, parentId: string, objects: SceneObjec
 }
 
 /**
- * Transpiles Roblox Lua script syntax to executable JavaScript.
+ * Transpiles Roblox Lua script syntax to executable JavaScript using luaparse AST.
+ * Falls back gracefully to regex conversion if syntax errors or non-standard tokens occur.
  */
 export function transpileRobloxLuaToJS(luaCode: string): string {
+  const loopGuardHeader = `let __totalLoopIterations = 0;\nfunction __checkLoopGuard() { if (++__totalLoopIterations > 50000) throw new Error("Script Execution Error: Infinite loop detected or maximum iteration limit exceeded (50,000 iterations)."); }\n`;
+
+  try {
+    const ast = luaparse.parse(luaCode, {
+      wait: false,
+      comments: false,
+      scope: true,
+      locations: false,
+      ranges: false,
+      luaVersion: '5.3',
+    });
+
+    const jsCode = transpileChunk(ast);
+    return loopGuardHeader + jsCode;
+  } catch (parseError: any) {
+    // If strict AST parsing fails (e.g. non-standard syntax), fallback to regex transpiler
+    return loopGuardHeader + transpileRobloxLuaFallback(luaCode);
+  }
+}
+
+/** Transpiles a block of Lua statements into JavaScript code */
+function transpileBlock(statements: luaparse.Statement[]): string {
+  if (!statements || statements.length === 0) return '';
+  return statements.map(transpileStatement).filter(Boolean).join('\n');
+}
+
+/** Transpiles a Lua AST chunk */
+function transpileChunk(chunk: luaparse.Chunk): string {
+  return transpileBlock(chunk.body);
+}
+
+/** Transpiles a single Lua statement into JavaScript */
+function transpileStatement(stmt: luaparse.Statement): string {
+  if (!stmt) return '';
+
+  switch (stmt.type) {
+    case 'LocalStatement': {
+      if (stmt.variables.length > 1 && stmt.init.length === 1) {
+        const varNames = stmt.variables.map((v) => v.name).join(', ');
+        const initVal = transpileExpression(stmt.init[0]);
+        return `var [${varNames}] = Array.isArray(${initVal}) ? ${initVal} : [${initVal}];`;
+      }
+      const decls = stmt.variables.map((v, i) => {
+        const init = stmt.init[i];
+        return `${v.name}${init ? ` = ${transpileExpression(init)}` : ' = null'}`;
+      });
+      return `var ${decls.join(', ')};`;
+    }
+
+    case 'AssignmentStatement': {
+      if (stmt.variables.length === 1) {
+        const target = transpileExpression(stmt.variables[0]);
+        const val = stmt.init[0] ? transpileExpression(stmt.init[0]) : 'null';
+        return `${target} = ${val};`;
+      }
+      const targets = stmt.variables.map(transpileExpression).join(', ');
+      const inits = stmt.init.map(transpileExpression).join(', ');
+      return `[${targets}] = [${inits}];`;
+    }
+
+    case 'CallStatement': {
+      return `${transpileExpression(stmt.expression)};`;
+    }
+
+    case 'IfStatement': {
+      return stmt.clauses
+        .map((clause) => {
+          if (clause.type === 'IfClause') {
+            return `if (${transpileExpression(clause.condition)}) {\n${transpileBlock(clause.body)}\n}`;
+          } else if (clause.type === 'ElseifClause') {
+            return `else if (${transpileExpression(clause.condition)}) {\n${transpileBlock(clause.body)}\n}`;
+          } else if (clause.type === 'ElseClause') {
+            return `else {\n${transpileBlock(clause.body)}\n}`;
+          }
+          return '';
+        })
+        .join(' ');
+    }
+
+    case 'WhileStatement': {
+      return `while (${transpileExpression(stmt.condition)}) {\n  __checkLoopGuard();\n${transpileBlock(stmt.body)}\n}`;
+    }
+
+    case 'RepeatStatement': {
+      return `do {\n  __checkLoopGuard();\n${transpileBlock(stmt.body)}\n} while (!(${transpileExpression(stmt.condition)}));`;
+    }
+
+    case 'DoStatement': {
+      return `{\n${transpileBlock(stmt.body)}\n}`;
+    }
+
+    case 'ReturnStatement': {
+      if (!stmt.arguments || stmt.arguments.length === 0) return 'return;';
+      if (stmt.arguments.length === 1) return `return ${transpileExpression(stmt.arguments[0])};`;
+      return `return [${stmt.arguments.map(transpileExpression).join(', ')}];`;
+    }
+
+    case 'BreakStatement': {
+      return 'break;';
+    }
+
+    case 'ForNumericStatement': {
+      const v = stmt.variable.name;
+      const start = transpileExpression(stmt.start);
+      const end = transpileExpression(stmt.end);
+      const step = stmt.step ? transpileExpression(stmt.step) : '1';
+      const isStepNegative = stmt.step && stmt.step.type === 'UnaryExpression' && stmt.step.operator === '-';
+      const cmp = isStepNegative ? '>=' : '<=';
+      return `for (let ${v} = ${start}; ${v} ${cmp} ${end}; ${v} += ${step}) {\n  __checkLoopGuard();\n${transpileBlock(stmt.body)}\n}`;
+    }
+
+    case 'ForGenericStatement': {
+      const firstIter = stmt.iterators[0];
+      const varNames = stmt.variables.map((v) => v.name).join(', ');
+      if (
+        firstIter &&
+        firstIter.type === 'CallExpression' &&
+        firstIter.base.type === 'Identifier' &&
+        (firstIter.base.name === 'pairs' || firstIter.base.name === 'ipairs')
+      ) {
+        const arg = firstIter.arguments[0] ? transpileExpression(firstIter.arguments[0]) : '{}';
+        return `for (let [${varNames}] of pairs(${arg})) {\n  __checkLoopGuard();\n${transpileBlock(stmt.body)}\n}`;
+      }
+      const iterStr = stmt.iterators.map(transpileExpression).join(', ');
+      return `for (let [${varNames}] of ${iterStr}) {\n  __checkLoopGuard();\n${transpileBlock(stmt.body)}\n}`;
+    }
+
+    case 'FunctionDeclaration': {
+      return transpileFunctionDeclaration(stmt);
+    }
+
+    default:
+      return '';
+  }
+}
+
+/** Transpiles a Lua function declaration statement or expression */
+function transpileFunctionDeclaration(decl: luaparse.FunctionDeclaration): string {
+  const params = decl.parameters.map((p) => (p.type === 'Identifier' ? p.name : '...args')).join(', ');
+  const body = transpileBlock(decl.body);
+
+  if (decl.identifier) {
+    if (decl.identifier.type === 'MemberExpression') {
+      const base = transpileExpression(decl.identifier.base);
+      const name = decl.identifier.identifier.name;
+      if (decl.identifier.indexer === ':') {
+        const allParams = params ? `self, ${params}` : 'self';
+        return `${base}.${name} = function(${allParams}) {\n${body}\n};`;
+      } else {
+        return `${base}.${name} = function(${params}) {\n${body}\n};`;
+      }
+    } else if (decl.identifier.type === 'Identifier') {
+      if (decl.isLocal) {
+        return `var ${decl.identifier.name} = function(${params}) {\n${body}\n};`;
+      }
+      return `function ${decl.identifier.name}(${params}) {\n${body}\n}`;
+    }
+  }
+  return `function(${params}) {\n${body}\n}`;
+}
+
+/** Transpiles Lua TableConstructorExpression into JS Array or Object */
+function transpileTableConstructor(node: luaparse.TableConstructorExpression): string {
+  if (!node.fields || node.fields.length === 0) {
+    return '{}';
+  }
+  const isPureSequence = node.fields.every((f) => f.type === 'TableValue');
+  if (isPureSequence) {
+    return `[${node.fields.map((f) => transpileExpression((f as luaparse.TableValue).value)).join(', ')}]`;
+  }
+  const fields = node.fields
+    .map((f, idx) => {
+      if (f.type === 'TableKeyString') {
+        return `${f.key.name}: ${transpileExpression(f.value)}`;
+      } else if (f.type === 'TableKey') {
+        return `[${transpileExpression(f.key)}]: ${transpileExpression(f.value)}`;
+      } else if (f.type === 'TableValue') {
+        return `[${idx + 1}]: ${transpileExpression(f.value)}`;
+      }
+      return '';
+    })
+    .filter(Boolean);
+  return `({ ${fields.join(', ')} })`;
+}
+
+/** Transpiles a single Lua expression into JavaScript */
+function transpileExpression(node: luaparse.Expression): string {
+  if (!node) return 'null';
+
+  switch (node.type) {
+    case 'Identifier':
+      return node.name === 'nil' ? 'null' : node.name;
+
+    case 'StringLiteral':
+      if (node.raw) {
+        if (node.raw.startsWith('[[') && node.raw.endsWith(']]')) {
+          return JSON.stringify(node.raw.slice(2, -2));
+        }
+        return node.raw;
+      }
+      return JSON.stringify(node.value ?? '');
+
+    case 'NumericLiteral':
+      return node.raw ?? `${node.value}`;
+
+    case 'BooleanLiteral':
+      return node.raw ?? `${node.value}`;
+
+    case 'NilLiteral':
+      return 'null';
+
+    case 'VarargLiteral':
+      return '...args';
+
+    case 'MemberExpression':
+      return `${transpileExpression(node.base)}.${node.identifier.name}`;
+
+    case 'IndexExpression':
+      return `${transpileExpression(node.base)}[${transpileExpression(node.index)}]`;
+
+    case 'CallExpression': {
+      if (node.base.type === 'MemberExpression' && node.base.indexer === ':') {
+        const baseObj = transpileExpression(node.base.base);
+        const methodName = node.base.identifier.name;
+        const args = node.arguments.map(transpileExpression).join(', ');
+        const fullArgs = args ? `${baseObj}, ${args}` : baseObj;
+        return `${baseObj}.${methodName}(${fullArgs})`;
+      }
+      const base = transpileExpression(node.base);
+      const args = node.arguments.map(transpileExpression).join(', ');
+      return `${base}(${args})`;
+    }
+
+    case 'TableCallExpression': {
+      return `${transpileExpression(node.base)}(${transpileExpression(node.arguments)})`;
+    }
+
+    case 'StringCallExpression': {
+      return `${transpileExpression(node.base)}(${transpileExpression(node.argument)})`;
+    }
+
+    case 'TableConstructorExpression':
+      return transpileTableConstructor(node);
+
+    case 'FunctionDeclaration':
+      return transpileFunctionDeclaration(node);
+
+    case 'BinaryExpression': {
+      const left = transpileExpression(node.left);
+      const right = transpileExpression(node.right);
+      switch (node.operator) {
+        case '..':
+          return `(${left} + ${right})`;
+        case '^':
+          return `Math.pow(${left}, ${right})`;
+        case '~=':
+          return `(${left} !== ${right})`;
+        case '==':
+          return `(${left} === ${right})`;
+        case '//':
+          return `Math.floor(${left} / ${right})`;
+        default:
+          return `(${left} ${node.operator} ${right})`;
+      }
+    }
+
+    case 'LogicalExpression': {
+      const left = transpileExpression(node.left);
+      const right = transpileExpression(node.right);
+      const op = node.operator === 'and' ? '&&' : '||';
+      return `(${left} ${op} ${right})`;
+    }
+
+    case 'UnaryExpression': {
+      const arg = transpileExpression(node.argument);
+      switch (node.operator) {
+        case 'not':
+          return `(!${arg})`;
+        case '-':
+          return `(-${arg})`;
+        case '#':
+          return `(${arg} ? (${arg}.length !== undefined ? ${arg}.length : Object.keys(${arg}).length) : 0)`;
+        case '~':
+          return `(~${arg})`;
+        default:
+          return `(!${arg})`;
+      }
+    }
+
+    default:
+      return 'null';
+  }
+}
+
+/** Fallback regex-based transpiler for non-standard Lua scripts */
+function transpileRobloxLuaFallback(luaCode: string): string {
   let js = luaCode;
 
   // 1. Remove single-line comments -- ...
   js = js.replace(/--.*$/gm, '');
 
-  // 2. Convert Lua tables to JS objects or arrays FIRST on raw Lua syntax using placeholder substitution
+  // 2. Convert Lua tables to JS objects or arrays using placeholder substitution
   function convertLuaTables(code: string): string {
     let result = code;
     const placeholders: string[] = [];
@@ -975,43 +1279,31 @@ export function transpileRobloxLuaToJS(luaCode: string): string {
   js = js.replace(/\.children\s*=\s*\{\}/g, '.children = []');
 
   // 3. Transpile function declarations:
-  // function Obj:Method(args) -> Obj.Method = function(self, args) {
   js = js.replace(/\bfunction\s+([a-zA-Z0-9_]+):([a-zA-Z0-9_]+)\s*\((.*?)\)/g, (match, obj, method, params) => {
     const p = params.trim() ? `self, ${params}` : 'self';
     return `${obj}.${method} = function(${p}) {`;
   });
-
-  // function Obj.Method(args) -> Obj.Method = function(args) {
   js = js.replace(/\bfunction\s+([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\s*\((.*?)\)/g, '$1.$2 = function($3) {');
-
-  // function Name(args) -> function Name(args) { (skip if already has {)
   js = js.replace(/\bfunction\s+([a-zA-Z0-9_]+)\s*\((.*?)\)(?!\s*\{)/g, 'function $1($2) {');
-
-  // anonymous function(args) -> function(args) { (skip if already has {)
   js = js.replace(/\bfunction\s*\((.*?)\)(?!\s*\{)/g, 'function($1) {');
 
   // 4. Convert Lua loops
-  // for k, v in pairs(obj) do or for i, v in ipairs(arr) do
   js = js.replace(
     /for\s+([a-zA-Z0-9_]+)\s*,\s*([a-zA-Z0-9_]+)\s+in\s+(?:pairs|ipairs)\(([^)]+)\)\s+do/g,
     'for (let [$1, $2] of pairs($3)) {'
   );
-  // for var in expr do
   js = js.replace(
     /for\s+([a-zA-Z0-9_]+)\s+in\s+([^\s\()]+)\s+do/g,
     'for (let $1 of $2) {'
   );
-  // for i = start, end, step do
   js = js.replace(
     /for\s+([a-zA-Z0-9_]+)\s*=\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s+do/g,
     'for (let $1 = $2; $1 <= $3; $1 += $4) {'
   );
-  // for i = start, end do
   js = js.replace(
     /for\s+([a-zA-Z0-9_]+)\s*=\s*([^,]+)\s*,\s*([^\s]+)\s+do/g,
     'for (let $1 = $2; $1 <= $3; $1++) {'
   );
-  // while cond do
   js = js.replace(
     /while\s+(.*?)\s+do/g,
     'while ($1) {'
@@ -1023,13 +1315,13 @@ export function transpileRobloxLuaToJS(luaCode: string): string {
   js = js.replace(/\belse\b/g, '} else {');
   js = js.replace(/\bend\b/g, '}');
 
-  // 6. Convert local variable definitions: local var1, var2 = ... -> var [var1, var2] = ... or local var = ... -> var var = ...
+  // 6. Convert local variable definitions
   js = js.replace(/\blocal\s+([a-zA-Z0-9_]+)\s*,\s*([a-zA-Z0-9_]+)\s*=\s*/g, 'var [$1, $2] = ');
   js = js.replace(/\blocal\s+/g, 'var ');
 
-  // 7. Convert method calls: obj:Method(args) -> obj.Method(obj, args) (Lua colon syntax passes self)
-  js = js.replace(/([a-zA-Z0-9_]+):([a-zA-Z0-9_]+)\((\))/g, '$1.$2($1)');   // obj:Method() -> obj.Method(obj)
-  js = js.replace(/([a-zA-Z0-9_]+):([a-zA-Z0-9_]+)\((?!\))/g, '$1.$2($1, '); // obj:Method(args -> obj.Method(obj, args
+  // 7. Convert method calls: obj:Method(args) -> obj.Method(obj, args)
+  js = js.replace(/([a-zA-Z0-9_]+):([a-zA-Z0-9_]+)\((\))/g, '$1.$2($1)');
+  js = js.replace(/([a-zA-Z0-9_]+):([a-zA-Z0-9_]+)\((?!\))/g, '$1.$2($1, ');
 
   // 8. Convert Roblox nil -> null
   js = js.replace(/\bnil\b/g, 'null');
@@ -1042,7 +1334,7 @@ export function transpileRobloxLuaToJS(luaCode: string): string {
   js = js.replace(/\band\b/g, '&&');
   js = js.replace(/\bor\b/g, '||');
 
-  // 11. Convert Lua len operator #var (exclude hex color strings)
+  // 11. Convert Lua len operator #var
   js = js.replace(/#([a-zA-Z_][a-zA-Z0-9_]*)/g, (match, varName) => {
     if (/^[0-9A-Fa-f]{6}$/.test(varName) || /^[0-9A-Fa-f]{3}$/.test(varName)) {
       return `#${varName}`;
@@ -1051,9 +1343,8 @@ export function transpileRobloxLuaToJS(luaCode: string): string {
   });
   js = js.replace(/#([0-9]+)/g, '$1');
 
-  // 12. Inject Infinite Loop Protection into transpiled loops
-  const loopGuardHeader = `let __totalLoopIterations = 0;\nfunction __checkLoopGuard() { if (++__totalLoopIterations > 50000) throw new Error("Script Execution Error: Infinite loop detected or maximum iteration limit exceeded (50,000 iterations)."); }\n`;
+  // 12. Inject loop guard
   js = js.replace(/(\bfor\b[^{]*\{|\bwhile\b[^{]*\{)/g, '$1 __checkLoopGuard(); ');
 
-  return loopGuardHeader + js;
+  return js;
 }
