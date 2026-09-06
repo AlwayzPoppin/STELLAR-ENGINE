@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { TextureManager, PRESET_TEXTURE_URLS } from './TextureManager';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { TextureManager, PRESET_TEXTURE_URLS, isCompressedTextureUrl } from './TextureManager';
 
 describe('TextureManager', () => {
   let loadSpy: any;
+  let ktx2LoadSpy: any;
+  let detectSupportSpy: any;
 
   beforeEach(() => {
     TextureManager.clear();
+    TextureManager.setRenderer(null);
 
     // Mock THREE.TextureLoader.prototype.load
     loadSpy = vi.spyOn(THREE.TextureLoader.prototype, 'load').mockImplementation((function (
@@ -21,10 +25,48 @@ describe('TextureManager', () => {
       }
       return tex;
     }) as any);
+
+    // Mock KTX2Loader.prototype.load
+    ktx2LoadSpy = vi.spyOn(KTX2Loader.prototype, 'load').mockImplementation((function (
+      this: KTX2Loader,
+      url: string,
+      onLoad?: (texture: THREE.CompressedTexture) => void
+    ) {
+      const compTex = new THREE.CompressedTexture(
+        [{ data: new Uint8Array([1, 2, 3, 4]), width: 512, height: 512 }],
+        512,
+        512,
+        THREE.RGBA_BPTC_Format,
+        THREE.UnsignedByteType
+      );
+      if (onLoad) {
+        setTimeout(() => onLoad(compTex), 10);
+      }
+      return compTex;
+    }) as any);
+
+    // Mock KTX2Loader.prototype.detectSupport
+    detectSupportSpy = vi.spyOn(KTX2Loader.prototype, 'detectSupport').mockImplementation(function (
+      this: KTX2Loader
+    ) {
+      return this;
+    });
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('should correctly identify compressed texture URLs (.ktx2 and .basis)', () => {
+    expect(isCompressedTextureUrl('https://example.com/texture.ktx2')).toBe(true);
+    expect(isCompressedTextureUrl('https://example.com/texture.KTX2')).toBe(true);
+    expect(isCompressedTextureUrl('https://example.com/texture.basis')).toBe(true);
+    expect(isCompressedTextureUrl('https://example.com/texture.ktx2?version=2#cache')).toBe(true);
+    expect(isCompressedTextureUrl('https://example.com/texture.png')).toBe(false);
+    expect(isCompressedTextureUrl('https://example.com/texture.jpg')).toBe(false);
+    expect(isCompressedTextureUrl('https://example.com/texture.webp')).toBe(false);
+    expect(isCompressedTextureUrl('')).toBe(false);
+    expect(isCompressedTextureUrl(null)).toBe(false);
   });
 
   it('should resolve preset texture names to their URLs', () => {
@@ -62,15 +104,57 @@ describe('TextureManager', () => {
     expect(stats.totalReferences).toBe(5);
   });
 
-  it('should assign correct color space (SRGB vs NoColorSpace)', async () => {
+  it('should load KTX2 / Basis compressed textures via KTX2Loader and track compression stats', async () => {
+    const ktx2Url = 'https://assets.stellar-engine.io/textures/materials/ground_rock.ktx2';
+
+    const tex = await TextureManager.acquireTexture(ktx2Url, {
+      repeatX: 3,
+      repeatY: 3,
+      isNormalMap: false,
+    });
+
+    expect(ktx2LoadSpy).toHaveBeenCalledTimes(1);
+    expect(loadSpy).not.toHaveBeenCalled();
+
+    expect(tex.colorSpace).toBe(THREE.SRGBColorSpace);
+    expect(tex.repeat.x).toBe(3);
+    expect(tex.repeat.y).toBe(3);
+    expect((tex as any).isCompressedTexture).toBe(true);
+
+    const stats = TextureManager.getStats();
+    expect(stats.compressedTextureCount).toBeGreaterThan(0);
+    expect(stats.baseCacheCount).toBe(1);
+    expect(stats.instanceCacheCount).toBe(1);
+  });
+
+  it('should assign correct color space (SRGB vs NoColorSpace) on standard and compressed textures', async () => {
     const colorUrl = 'https://example.com/diffuse.png';
     const normalUrl = 'https://example.com/normal.png';
+    const compColorUrl = 'https://example.com/diffuse.ktx2';
+    const compNormalUrl = 'https://example.com/normal.ktx2';
 
     const colorTex = await TextureManager.acquireTexture(colorUrl, { isNormalMap: false });
     const normalTex = await TextureManager.acquireTexture(normalUrl, { isNormalMap: true });
+    const compColorTex = await TextureManager.acquireTexture(compColorUrl, { isNormalMap: false });
+    const compNormalTex = await TextureManager.acquireTexture(compNormalUrl, { isNormalMap: true });
 
     expect(colorTex.colorSpace).toBe(THREE.SRGBColorSpace);
     expect(normalTex.colorSpace).toBe(THREE.NoColorSpace);
+    expect(compColorTex.colorSpace).toBe(THREE.SRGBColorSpace);
+    expect(compNormalTex.colorSpace).toBe(THREE.NoColorSpace);
+  });
+
+  it('should properly configure GPU transcoder detection when setRenderer is invoked', () => {
+    const mockRenderer: any = {
+      capabilities: {},
+      extensions: {},
+    };
+
+    TextureManager.setRenderer(mockRenderer);
+    expect(detectSupportSpy).toHaveBeenCalledWith(mockRenderer);
+    expect(TextureManager.getStats().transcoderReady).toBe(true);
+
+    TextureManager.setRenderer(null);
   });
 
   it('should correctly increment and decrement reference counts on acquire and release', async () => {
@@ -94,8 +178,8 @@ describe('TextureManager', () => {
     expect(stats.totalReferences).toBe(0);
   });
 
-  it('should create separate instances for different repeat or UV options', async () => {
-    const url = 'https://example.com/transform_test.png';
+  it('should create separate instances for different repeat or UV options on compressed textures without duplicate network requests', async () => {
+    const url = 'https://example.com/compressed_transform_test.ktx2';
 
     const texA = await TextureManager.acquireTexture(url, { repeatX: 2, repeatY: 2 });
     const texB = await TextureManager.acquireTexture(url, { repeatX: 4, repeatY: 4 });
@@ -106,8 +190,8 @@ describe('TextureManager', () => {
     expect(texB.repeat.x).toBe(4);
     expect(texB.repeat.y).toBe(4);
 
-    // Only ONE base load should have occurred despite 2 distinct instance transforms
-    expect(loadSpy).toHaveBeenCalledTimes(1);
+    // Only ONE network/KTX2 load should have occurred despite 2 distinct instance transforms
+    expect(ktx2LoadSpy).toHaveBeenCalledTimes(1);
 
     const stats = TextureManager.getStats();
     expect(stats.baseCacheCount).toBe(1);
@@ -168,5 +252,53 @@ describe('TextureManager', () => {
     TextureManager.pruneUnused();
     expect(TextureManager.getStats().totalReferences).toBe(0);
   });
-});
 
+  it('should deeply purge WebGLRenderTarget, ImageBitmap, and renderer properties upon release and prune', async () => {
+    const url = 'https://example.com/vram_leak_test.png';
+    const tex = await TextureManager.acquireTexture(url);
+
+    // Mock WebGLRenderTarget attached to texture
+    const mockDisposeRenderTarget = vi.fn();
+    (tex as any).renderTarget = {
+      dispose: mockDisposeRenderTarget,
+    };
+
+    // Mock ImageBitmap close method
+    const mockCloseBitmap = vi.fn();
+    (tex as any).image = {
+      width: 512,
+      height: 512,
+      close: mockCloseBitmap,
+    };
+
+    // Mock material referencing this texture
+    const mockMaterial: any = {
+      map: tex,
+      normalMap: null,
+      needsUpdate: false,
+    };
+    (tex as any).__boundMaterials = [mockMaterial];
+
+    // Mock WebGLRenderer cache
+    const mockRemoveProp = vi.fn();
+    const mockResetTexture = vi.fn();
+    const mockRenderer: any = {
+      properties: { remove: mockRemoveProp },
+      textures: { reset: mockResetTexture },
+    };
+    TextureManager.setRenderer(mockRenderer);
+
+    // Release and clear
+    TextureManager.releaseTexture(tex);
+    TextureManager.clear();
+
+    expect(mockDisposeRenderTarget).toHaveBeenCalledTimes(1);
+    expect(mockCloseBitmap).toHaveBeenCalledTimes(1);
+    expect(mockRemoveProp).toHaveBeenCalledWith(tex);
+    expect(mockResetTexture).toHaveBeenCalledWith(tex);
+    expect(mockMaterial.map).toBeNull();
+    expect(mockMaterial.needsUpdate).toBe(true);
+
+    TextureManager.setRenderer(null);
+  });
+});

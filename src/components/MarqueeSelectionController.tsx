@@ -3,6 +3,8 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useStore } from '../store/useStore';
 
+import { SceneSpatialIndex } from '../utils/SpatialPartitioning';
+
 interface MarqueeSelectionControllerProps {
   setMarqueeBox: (box: { startX: number; startY: number; endX: number; endY: number } | null) => void;
   setMarqueeSelectedIds: (ids: string[]) => void;
@@ -64,7 +66,7 @@ export const MarqueeSelectionController: React.FC<MarqueeSelectionControllerProp
     // Initial cache initialization
     updateCachedRect();
 
-    // Cache 3D bounding boxes on pointerdown to eliminate expensive matrix recalculations during dragging
+    // Cache 3D bounding boxes on pointerdown using spatial acceleration index
     const cacheObjectBounds = () => {
       const exportScene = scene.getObjectByName('export_scene');
       if (!exportScene) {
@@ -72,6 +74,7 @@ export const MarqueeSelectionController: React.FC<MarqueeSelectionControllerProp
         return;
       }
 
+      const spatialIndex = SceneSpatialIndex.getInstance();
       const storeObjects = useStore.getState().objects;
       const list: CachedObjectBounds[] = [];
 
@@ -92,17 +95,16 @@ export const MarqueeSelectionController: React.FC<MarqueeSelectionControllerProp
           }
         });
 
-        if (!node) continue;
-
-        _scratchBox.setFromObject(node);
-        node.getWorldPosition(_scratchPos);
-
-        list.push({
-          id: obj.id,
-          box: _scratchBox.clone(),
-          worldPos: _scratchPos.clone(),
-          isEmpty: _scratchBox.isEmpty(),
-        });
+        if (node) {
+          _scratchBox.setFromObject(node);
+          node.getWorldPosition(_scratchPos);
+          list.push({
+            id: obj.id,
+            box: _scratchBox.clone(),
+            worldPos: _scratchPos.clone(),
+            isEmpty: _scratchBox.isEmpty(),
+          });
+        }
       }
 
       cachedBoundsRef.current = list;
@@ -217,9 +219,10 @@ export const MarqueeSelectionController: React.FC<MarqueeSelectionControllerProp
       if (e.button !== 0) return;
 
       const store = useStore.getState();
-      // Only trigger if not in play mode and in select tool
+      // Only trigger if not in play mode, in select tool, and specifically in select transform mode
       if (store.isPlaying) return;
       if (store.activeTool !== 'select') return;
+      if (store.transformMode !== 'select') return;
       if (store.gizmoFocused) return;
 
       // Refresh bounding rect on pointer down
@@ -244,7 +247,15 @@ export const MarqueeSelectionController: React.FC<MarqueeSelectionControllerProp
       intersects.some((h) => {
         let cur: THREE.Object3D | null = h.object;
         while (cur && cur !== scene) {
-          if (cur.userData?.isDragHandle || cur.userData?.isGizmo) {
+          if (
+            cur.userData?.isDragHandle ||
+            cur.userData?.isGizmo ||
+            cur.name?.includes('Transform') ||
+            cur.type?.includes('TransformControls') ||
+            (cur as any).isTransformControls ||
+            (cur as any).isTransformControlsGizmo ||
+            (cur as any).isTransformControlsPlane
+          ) {
             clickedDragHandle = true;
             return true;
           }
@@ -275,6 +286,13 @@ export const MarqueeSelectionController: React.FC<MarqueeSelectionControllerProp
 
     const handlePointerMove = (e: PointerEvent) => {
       if (!isDraggingRef.current || !dragStartRef.current) return;
+      if (useStore.getState().gizmoFocused) {
+        isDraggingRef.current = false;
+        dragStartRef.current = null;
+        setMarqueeBox(null);
+        setMarqueeSelectedIds([]);
+        return;
+      }
 
       const rect = cachedRectRef.current;
       const clientX = e.clientX - rect.left;

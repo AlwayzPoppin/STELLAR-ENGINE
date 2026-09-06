@@ -278,6 +278,24 @@ class CollisionEventBrokerClass {
 
     // 2. Dispatch event to broker
     this.dispatch(event);
+
+    // 3. Bridge physics impact to gameplay logic (e.g. enemy defeat upon high impact)
+    if (force > 15) {
+      const store = useStore.getState();
+      const targetIsEnemy =
+        (resolvedTarget?.name && /enemy|boss|goblin|monster|target|npc/i.test(resolvedTarget.name)) ||
+        (resolvedTarget as any)?.isEnemy;
+      const otherIsEnemy =
+        (resolvedOther?.name && /enemy|boss|goblin|monster|target|npc/i.test(resolvedOther.name)) ||
+        (resolvedOther as any)?.isEnemy;
+
+      if (targetIsEnemy) {
+        store.triggerScriptedEvents('on_enemy_defeated', targetId);
+      }
+      if (otherIsEnemy && otherId) {
+        store.triggerScriptedEvents('on_enemy_defeated', otherId);
+      }
+    }
   }
 
   /**
@@ -336,6 +354,13 @@ class CollisionEventBrokerClass {
     };
 
     this.dispatch(event);
+
+    // Bridge physics trigger volumes to gameplay logic scripted events & quests
+    const store = useStore.getState();
+    store.triggerScriptedEvents('on_enter_trigger', targetId);
+    if (otherId) {
+      store.triggerScriptedEvents('on_enter_trigger', otherId);
+    }
   }
 
   /**

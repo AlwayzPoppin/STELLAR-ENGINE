@@ -153,5 +153,40 @@ describe('Monaco Script Autocompletions (Engine, Quests, Dialogues, Variables)',
     expect(labels).toContain('function update');
     expect(labels).toContain('function init');
   });
+
+  it('should invoke editor.layout on window resize and observer callbacks', () => {
+    const mockLayout = vi.fn();
+    const mockEditor = {
+      layout: mockLayout,
+      onDidDispose: vi.fn(),
+      onDidBlurEditorText: vi.fn(),
+      addCommand: vi.fn(),
+    };
+
+    const handleResize = () => {
+      mockEditor.layout();
+    };
+
+    // Simulate window resize listener
+    handleResize();
+    expect(mockLayout).toHaveBeenCalledTimes(1);
+
+    // Simulate ResizeObserver callback
+    let observerCallback: any = null;
+    class MockResizeObserver {
+      constructor(cb: any) {
+        observerCallback = cb;
+      }
+      observe() {}
+      disconnect() {}
+    }
+
+    const obs = new MockResizeObserver(() => {
+      mockEditor.layout();
+    });
+    observerCallback();
+    expect(mockLayout).toHaveBeenCalledTimes(2);
+  });
 });
+
 

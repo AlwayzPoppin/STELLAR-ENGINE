@@ -48,4 +48,13 @@ describe('offlineRouter generic intent routing', () => {
     expect(res2.actions?.[0].cmd).toBe('set_game_variable');
     expect(res2.actions?.[0].params.key).toBe('score');
   });
+
+  it('should route agentic foliage painting requests and populate foliageInstances', () => {
+    const res = routeIntent('paint a dense pine forest with 300 trees', dummyCtx);
+    expect(res.actionType).toBe('scene_action');
+    expect(res.actionLabel).toContain('Paint Foliage');
+    expect(res.actions?.[0].cmd).toBe('paint_foliage');
+    expect(res.actions?.[0].params.preset).toBe('procedural:pine_tree');
+    expect(res.actions?.[0].params.count).toBe(300);
+  });
 });

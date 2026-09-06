@@ -1569,5 +1569,41 @@ describe('useStore', () => {
       (window as any).localStorage = originalLocalStorage;
     }
   });
+
+  it('should support agentic paint_foliage command via applyAiPlan', () => {
+    useStore.getState().clearFoliage();
+    expect(useStore.getState().foliageInstances.length).toBe(0);
+
+    const msgId = 'msg_foliage_test';
+    useStore.setState({
+      assistantMessages: [
+        {
+          id: msgId,
+          role: 'assistant',
+          content: 'Painting foliage',
+          timestamp: Date.now(),
+          actionType: 'scene_action',
+          actions: [
+            {
+              targetId: 'foliage_system',
+              targetName: 'Foliage Instancing Engine',
+              before: {},
+              after: {},
+              cmd: 'paint_foliage',
+              params: {
+                preset: 'procedural:pine_tree',
+                count: 50,
+                radius: 20,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    useStore.getState().applySceneAction(msgId);
+    expect(useStore.getState().foliageInstances.length).toBe(50);
+    expect(useStore.getState().foliageInstances[0].assetUrl).toBe('procedural:pine_tree');
+  });
 });
 

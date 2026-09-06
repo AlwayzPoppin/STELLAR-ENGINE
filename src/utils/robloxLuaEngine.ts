@@ -1,6 +1,7 @@
-import { useStore, SceneObject } from '../store/useStore';
+import { useStore, SceneObject, getWorldPositionOfObject } from '../store/useStore';
 import { toast } from '../store/useToastStore';
 import { CollisionEventBroker } from '../physics/CollisionEventBroker';
+import { getSceneTerrainElevation, calculateEntityTerrainTargetY } from '../physics/TerrainFollowingController';
 import * as luaparse from 'luaparse';
 
 // Roblox Material to Stellar Engine Material Mapper
@@ -831,6 +832,23 @@ export function executeRobloxLuaScript(scriptText: string): ExecutionResult {
       },
       CloseDialogue: () => {
         useStore.getState().setActiveDialogue(null);
+      },
+
+      // ── Terrain Height & Pathing Bridge ──
+      GetTerrainHeight: (x: number, z: number) => {
+        const state = useStore.getState();
+        return getSceneTerrainElevation(x, z, state.objects, 0);
+      },
+      SnapToTerrain: (objectId: string, offset: number = 0) => {
+        const state = useStore.getState();
+        const obj = state.objects.find((o) => o.id === objectId || o.name === objectId);
+        if (obj) {
+          const [worldX, , worldZ] = getWorldPositionOfObject(obj, state.objects);
+          const targetY = calculateEntityTerrainTargetY(obj, worldX, worldZ, state.objects, offset);
+          state.updateObject(obj.id, { position: [obj.position[0], targetY, obj.position[2]] });
+          return targetY;
+        }
+        return null;
       },
     };
 

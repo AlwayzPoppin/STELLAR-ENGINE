@@ -311,18 +311,23 @@ function parseIntent(input: string): ParsedIntent {
       return { intent: 'GENRE_BLUEPRINT', genre: entry.blueprint.genre, keywords: words };
     }
   }
-  // 3.5 Agentic commands (add, delete, quest, event, variable, sound, visibility, set)
+  // 3.5 Agentic commands (add, delete, quest, event, variable, sound, visibility, set, foliage, forest, paint)
   const isAgentic = (
     clean.includes('add') || clean.includes('spawn') || clean.includes('create') || clean.includes('insert') ||
     clean.includes('delete') || clean.includes('remove') || clean.includes('destroy') || clean.includes('set') ||
     clean.includes('quest') || clean.includes('mission') || clean.includes('event') || clean.includes('variable') ||
-    clean.includes('sound') || clean.includes('audio') || clean.includes('visibility') || clean.includes('visible')
+    clean.includes('sound') || clean.includes('audio') || clean.includes('visibility') || clean.includes('visible') ||
+    clean.includes('paint') || clean.includes('forest') || clean.includes('foliage') || clean.includes('grass') ||
+    clean.includes('trees') || clean.includes('tree') || clean.includes('flower') || clean.includes('bush') ||
+    clean.includes('fern')
   ) && (
     clean.includes('cube') || clean.includes('sphere') || clean.includes('light') || clean.includes('plane') ||
     clean.includes('cylinder') || clean.includes('object') || clean.includes('quest') || clean.includes('event') ||
     clean.includes('variable') || clean.includes('timer') || clean.includes('cooldown') || clean.includes('score') ||
     clean.includes('health') || clean.includes('points') || clean.includes('visibility') || clean.includes('visible') ||
-    clean.includes('sound') || clean.includes('audio')
+    clean.includes('sound') || clean.includes('audio') || clean.includes('paint') || clean.includes('forest') ||
+    clean.includes('foliage') || clean.includes('grass') || clean.includes('trees') || clean.includes('tree') ||
+    clean.includes('flower') || clean.includes('bush') || clean.includes('fern')
   );
   if (isAgentic) {
     return { intent: 'AGENTIC_CMD', keywords: words };
@@ -637,6 +642,58 @@ export function routeIntent(query: string, ctx: RouterContext): AssistantMessage
           after: {},
           cmd: 'set_game_variable',
           params: { key, value: val }
+        });
+      } else if (
+        clean.includes('paint') ||
+        clean.includes('forest') ||
+        clean.includes('foliage') ||
+        clean.includes('grass') ||
+        clean.includes('tree') ||
+        clean.includes('flower') ||
+        clean.includes('bush') ||
+        clean.includes('fern')
+      ) {
+        let preset = 'procedural:pine_tree';
+        let presetName = 'Pine Trees';
+        if (clean.includes('oak')) {
+          preset = 'procedural:oak_tree';
+          presetName = 'Oak Trees';
+        } else if (clean.includes('grass')) {
+          preset = 'procedural:grass_tuft';
+          presetName = 'Grass Tufts';
+        } else if (clean.includes('flower')) {
+          preset = 'procedural:flower_cluster';
+          presetName = 'Flower Clusters';
+        } else if (clean.includes('bush') || clean.includes('shrub')) {
+          preset = 'procedural:bush';
+          presetName = 'Bushes';
+        } else if (clean.includes('fern')) {
+          preset = 'procedural:fern';
+          presetName = 'Ferns';
+        }
+
+        let count = 200;
+        const numMatch = clean.match(/\d+/);
+        if (numMatch) {
+          count = Math.min(1000, Math.max(10, parseInt(numMatch[0], 10)));
+        } else if (clean.includes('dense') || clean.includes('heavy') || clean.includes('lots')) {
+          count = 400;
+        } else if (clean.includes('sparse') || clean.includes('few') || clean.includes('light')) {
+          count = 50;
+        }
+
+        textContent = `I will paint **${count}x ${presetName}** across the terrain surface using the Foliage Instancing Engine.`;
+        label = `Paint Foliage: ${presetName} (${count}x)`;
+        actions.push({
+          targetId: 'foliage_system',
+          targetName: 'Foliage Instancing Engine',
+          before: {},
+          after: {},
+          cmd: 'paint_foliage',
+          params: {
+            preset,
+            count,
+          }
         });
       } else {
         textContent = `I will create a scripted event block for your level progression.`;

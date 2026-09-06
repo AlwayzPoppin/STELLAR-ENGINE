@@ -100,6 +100,9 @@ const SceneActionCard = ({ msg, onApply }: { msg: AssistantMessage; onApply: () 
               } else if (action.cmd === 'set_game_variable') {
                 badgeColor = 'bg-blue-500/10 text-blue-400 border-blue-500/20';
                 badgeText = 'VARIABLE';
+              } else if (action.cmd === 'paint_foliage') {
+                badgeColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                badgeText = 'FOLIAGE';
               }
 
               return (
@@ -115,6 +118,7 @@ const SceneActionCard = ({ msg, onApply }: { msg: AssistantMessage; onApply: () 
                         : action.cmd === 'delete_object' ? 'Remove object'
                         : action.cmd === 'add_quest' ? `Quest "${action.params?.title || 'quest'}"`
                         : action.cmd === 'add_scripted_event' ? `Event "${action.params?.name || 'event'}"`
+                        : action.cmd === 'paint_foliage' ? `Paint ${action.params?.count || 200}x ${action.params?.preset || 'foliage'}`
                         : `Set variable "${action.params?.key}"`)
                       : `${Object.keys(action.after).length} change${Object.keys(action.after).length > 1 ? 's' : ''}`
                     }

@@ -15,6 +15,7 @@ import {
   Stars,
   Stats,
   useTexture,
+  Outlines,
 } from '@react-three/drei';
 import { OBJLoader } from 'three-stdlib';
 import { Physics, RigidBody, CuboidCollider, BallCollider, useRapier } from '@react-three/rapier';
@@ -22,6 +23,7 @@ import { Geometry, Base, Addition, Subtraction, Intersection } from '@react-thre
 import { EffectComposer, Bloom, ToneMapping, Vignette, Outline, Selection, Select, GodRays } from '@react-three/postprocessing';
 import { useStore, SceneObject, FoliageInstanceData, BoneNode } from '../store/useStore';
 import { CollisionEventBroker } from '../physics/CollisionEventBroker';
+import { calculateEntityTerrainTargetY, getTerrainSurfaceNormal } from '../physics/TerrainFollowingController';
 import { useAssetStore } from '../store/useAssetStore';
 import * as THREE from 'three';
 import { toast } from '../store/useToastStore';
@@ -29,6 +31,10 @@ import { exportSceneWithPipeline } from '../utils/GLTFExportPipeline';
 import { Layers, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Play, Pause } from 'lucide-react';
 import { BlendFunction, KernelSize } from 'postprocessing';
 import { useManagedTexture, TextureManager, PRESET_TEXTURE_URLS } from '../utils/TextureManager';
+import {
+  applyVertexWeightBrush,
+  VertexWeightBrushParams,
+} from '../utils/weightPainting';
 import {
   PROCEDURAL_FOLIAGE_PRESETS,
   getProceduralFoliageParts,
@@ -44,8 +50,29 @@ import {
 import { AssetStagingManager, StagingProgressEvent } from '../utils/AssetStagingManager';
 import { SpatialAudioManager } from '../utils/SpatialAudioManager';
 import { MarqueeSelectionController } from './MarqueeSelectionController';
+import { createEyeCanvasTexture, createEyeballGeometry } from '../utils/EyeGeometryLibrary';
+import { calculateEyeCenters, applyEyelidBlinkDeformation } from '../utils/EyeSocketManager';
+import { FacialWizard3D, FacialWizardHUD } from './FacialRigWizardOverlay';
+import { SpatialPartitioningController } from './SpatialPartitioningController';
+import { SceneSpatialIndex } from '../utils/SpatialPartitioning';
 
-
+// Safely patch requestPointerLock to handle browser cooldown rejection without unhandled promises
+if (typeof Element !== 'undefined' && Element.prototype.requestPointerLock) {
+  const origRequestPointerLock = Element.prototype.requestPointerLock;
+  Element.prototype.requestPointerLock = function (...args: any[]) {
+    try {
+      const res = origRequestPointerLock.apply(this, args);
+      if (res && typeof (res as any).catch === 'function') {
+        (res as any).catch(() => {
+          // Gracefully ignore browser pointer lock exit-reentry timing rejection
+        });
+      }
+      return res;
+    } catch {
+      // Ignored
+    }
+  };
+}
 
 class ModelErrorBoundary extends React.Component<
   { children: React.ReactNode; fallback?: React.ReactNode; assetName?: string },
@@ -85,6 +112,51 @@ class ModelErrorBoundary extends React.Component<
 }
 
 let playerRigidBodyRef: any = null;
+
+/**
+ * Refined Gizmo occlusion filter: Drops raycast intersections ONLY if they are
+ * at or behind the actual distance of the gizmo axis/handle from the camera.
+ * Allows foreground meshes in front of the active gizmo to receive pointer interactions.
+ */
+export function filterGizmoOccludedIntersections(
+  items: THREE.Intersection[],
+  isGizmoFocused: boolean,
+  camera?: THREE.Camera | null,
+  selectedObjects?: { position: [number, number, number] }[]
+): THREE.Intersection[] {
+  if (!isGizmoFocused || items.length === 0) {
+    return items;
+  }
+
+  // 1. Check if any intersection item itself is part of TransformControls
+  const gizmoHit = items.find(
+    (item) =>
+      (item.object as any)?.isTransformControls ||
+      (item.object as any)?.isTransformControlsGizmo ||
+      (item.object as any)?.isTransformControlsPlane ||
+      (item.object as any)?.userData?.isGizmo ||
+      (item.object as any)?.userData?.isDragHandle ||
+      item.object.name?.includes('TransformControls') ||
+      item.object.parent?.name?.includes('TransformControls') ||
+      (item.object.parent as any)?.isTransformControls
+  );
+
+  let gizmoDistance = gizmoHit ? gizmoHit.distance : Infinity;
+
+  // 2. If gizmo is not in explicit items, compute distance from camera to active target centroid
+  if (!gizmoHit && selectedObjects && selectedObjects.length > 0 && camera) {
+    const centroid = new THREE.Vector3();
+    selectedObjects.forEach((obj) => {
+      centroid.add(new THREE.Vector3(obj.position[0], obj.position[1], obj.position[2]));
+    });
+    centroid.divideScalar(selectedObjects.length);
+    gizmoDistance = camera.position.distanceTo(centroid);
+  }
+
+  // 3. Only filter out intersections that are strictly at or behind the gizmo distance.
+  // Intersections closer to camera than the gizmo (item.distance < gizmoDistance) are preserved.
+  return items.filter((item) => item.distance < gizmoDistance);
+}
 
 export function extractSkeletonFromScene(scene: THREE.Object3D): BoneNode[] {
   if (!scene) return [];
@@ -475,8 +547,13 @@ function GltfModel({ url, isPlayer, objId }: { url: string; isPlayer?: boolean; 
         child.userData = { ...child.userData, id: objId };
       }
       if (child.isMesh) {
-        // Override expensive per-triangle raycasting with fast bounding sphere check
+        // Fast bounding sphere check in regular mode; exact per-triangle raycasting in weightPaint mode
+        const standardMeshRaycast = THREE.Mesh.prototype.raycast;
         child.raycast = function (raycaster: THREE.Raycaster, intersects: any[]) {
+          if (useStore.getState().activeTool === 'weightPaint') {
+            standardMeshRaycast.call(this, raycaster, intersects);
+            return;
+          }
           if (!this.geometry) return;
           if (!this.geometry.boundingSphere) {
             this.geometry.computeBoundingSphere();
@@ -531,19 +608,56 @@ function GltfModel({ url, isPlayer, objId }: { url: string; isPlayer?: boolean; 
 
   const workspaceMode = useStore((state) => state.workspaceMode);
   const animationTargetId = useStore((state) => state.animationTargetId);
+  const selectedIds = useStore((state) => state.selectedIds);
+  const isSelected = !!objId && selectedIds.includes(objId);
+
+  const targetObj = useStore((s) => s.objects.find((o) => o.id === objId));
+
+  // Sync and restore vertexWeights onto GLTF geometry when weights update or on mount
+  useEffect(() => {
+    if (!clonedScene || !targetObj?.vertexWeights) return;
+    clonedScene.traverse((child: any) => {
+      if (child.isMesh && child.geometry) {
+        const key = child.name || 'default';
+        const storedWeights =
+          targetObj.vertexWeights?.[key] ||
+          targetObj.vertexWeights?.['default'] ||
+          targetObj.vertexWeights?.[child.uuid] ||
+          (targetObj.vertexWeights ? Object.values(targetObj.vertexWeights)[0] : null);
+
+        const count = child.geometry.attributes.position?.count || 0;
+        if (storedWeights && storedWeights.length === count * 4) {
+          const colors = new Float32Array(storedWeights);
+          child.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+          (child.geometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+          if (child.material) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach((m: any) => {
+                if (m) {
+                  m.vertexColors = true;
+                  m.needsUpdate = true;
+                }
+              });
+            } else {
+              child.material.vertexColors = true;
+              child.material.needsUpdate = true;
+            }
+          }
+        }
+      }
+    });
+  }, [clonedScene, targetObj?.vertexWeights]);
 
   useEffect(() => {
     if (!clonedScene) return;
-    const isTarget = (objId && animationTargetId === objId) || (!animationTargetId && workspaceMode === 'animation');
-    if (isTarget || workspaceMode === 'animation') {
+    const isTarget =
+      (objId && animationTargetId === objId) || (isSelected && workspaceMode === 'animation');
+    if (isTarget) {
       useStore.getState().setActiveClonedScene(clonedScene);
       const skeleton = extractSkeletonFromScene(clonedScene);
       useStore.getState().setActiveSkeleton(skeleton);
-      if (objId && !animationTargetId) {
-        useStore.getState().setAnimationTargetId(objId);
-      }
     }
-  }, [clonedScene, objId, animationTargetId, workspaceMode]);
+  }, [clonedScene, objId, animationTargetId, workspaceMode, isSelected]);
 
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const actionsRef = useRef<Record<string, THREE.AnimationAction>>({});
@@ -684,6 +798,59 @@ function FbxModel({ url, objId }: { url: string; objId?: string }) {
     return clone;
   }, [fbx, objId]);
 
+  const workspaceMode = useStore((state) => state.workspaceMode);
+  const animationTargetId = useStore((state) => state.animationTargetId);
+  const selectedIds = useStore((state) => state.selectedIds);
+  const isSelected = !!objId && selectedIds.includes(objId);
+
+  const targetObj = useStore((s) => s.objects.find((o) => o.id === objId));
+
+  // Sync and restore vertexWeights onto FBX geometry when weights update or on mount
+  useEffect(() => {
+    if (!clonedScene || !targetObj?.vertexWeights) return;
+    clonedScene.traverse((child: any) => {
+      if (child.isMesh && child.geometry) {
+        const key = child.name || 'default';
+        const storedWeights =
+          targetObj.vertexWeights?.[key] ||
+          targetObj.vertexWeights?.['default'] ||
+          targetObj.vertexWeights?.[child.uuid] ||
+          (targetObj.vertexWeights ? Object.values(targetObj.vertexWeights)[0] : null);
+
+        const count = child.geometry.attributes.position?.count || 0;
+        if (storedWeights && storedWeights.length === count * 4) {
+          const colors = new Float32Array(storedWeights);
+          child.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+          (child.geometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+          if (child.material) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach((m: any) => {
+                if (m) {
+                  m.vertexColors = true;
+                  m.needsUpdate = true;
+                }
+              });
+            } else {
+              child.material.vertexColors = true;
+              child.material.needsUpdate = true;
+            }
+          }
+        }
+      }
+    });
+  }, [clonedScene, targetObj?.vertexWeights]);
+
+  useEffect(() => {
+    if (!clonedScene) return;
+    const isTarget =
+      (objId && animationTargetId === objId) || (isSelected && workspaceMode === 'animation');
+    if (isTarget) {
+      useStore.getState().setActiveClonedScene(clonedScene);
+      const skeleton = extractSkeletonFromScene(clonedScene);
+      useStore.getState().setActiveSkeleton(skeleton);
+    }
+  }, [clonedScene, objId, animationTargetId, workspaceMode, isSelected]);
+
   const mixerRef = useRef<THREE.AnimationMixer | null>(null);
   const isPlaying = useStore((state) => state.isPlaying);
   const isPaused = useStore((state) => state.isPaused);
@@ -726,8 +893,13 @@ function ObjModel({ url, objId }: { url: string; objId?: string }) {
           child.geometry.computeVertexNormals();
         }
 
-        // Fast bounding sphere raycasting check
+        // Fast bounding sphere raycasting check in regular mode; exact per-triangle raycasting in weightPaint mode
+        const standardMeshRaycast = THREE.Mesh.prototype.raycast;
         child.raycast = function (raycaster: THREE.Raycaster, intersects: any[]) {
+          if (useStore.getState().activeTool === 'weightPaint') {
+            standardMeshRaycast.call(this, raycaster, intersects);
+            return;
+          }
           if (!this.geometry) return;
           if (!this.geometry.boundingSphere) {
             this.geometry.computeBoundingSphere();
@@ -759,6 +931,43 @@ function ObjModel({ url, objId }: { url: string; objId?: string }) {
     return clone;
   }, [obj, objId]);
 
+  const targetObj = useStore((s) => s.objects.find((o) => o.id === objId));
+
+  // Sync and restore vertexWeights onto OBJ geometry when weights update or on mount
+  useEffect(() => {
+    if (!clonedScene || !targetObj?.vertexWeights) return;
+    clonedScene.traverse((child: any) => {
+      if (child.isMesh && child.geometry) {
+        const key = child.name || 'default';
+        const storedWeights =
+          targetObj.vertexWeights?.[key] ||
+          targetObj.vertexWeights?.['default'] ||
+          targetObj.vertexWeights?.[child.uuid] ||
+          (targetObj.vertexWeights ? Object.values(targetObj.vertexWeights)[0] : null);
+
+        const count = child.geometry.attributes.position?.count || 0;
+        if (storedWeights && storedWeights.length === count * 4) {
+          const colors = new Float32Array(storedWeights);
+          child.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+          (child.geometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+          if (child.material) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach((m: any) => {
+                if (m) {
+                  m.vertexColors = true;
+                  m.needsUpdate = true;
+                }
+              });
+            } else {
+              child.material.vertexColors = true;
+              child.material.needsUpdate = true;
+            }
+          }
+        }
+      }
+    });
+  }, [clonedScene, targetObj?.vertexWeights]);
+
   return <primitive object={clonedScene} />;
 }
 
@@ -776,8 +985,17 @@ export function isFbxFormat(obj: SceneObject): boolean {
   return name.endsWith('.fbx') || url.includes('.fbx') || url.startsWith('data:model/fbx');
 }
 
-function CustomMaterial({ material }: { material: SceneObject['material'] }) {
+function CustomMaterial({
+  material,
+  obj,
+  meshRef,
+}: {
+  material: SceneObject['material'];
+  obj?: SceneObject;
+  meshRef?: React.RefObject<THREE.Mesh | THREE.Object3D | null>;
+}) {
   const wireframeMode = useStore((state) => state.wireframeMode);
+  const activeTool = useStore((state) => state.activeTool);
 
   const rx = material?.repeatX ?? 2;
   const ry = material?.repeatY ?? 2;
@@ -806,12 +1024,34 @@ function CustomMaterial({ material }: { material: SceneObject['material'] }) {
     isWater: !!isWater,
   });
 
+  // Persistent memoized uniforms for shader injection (ensures values update even when Three.js caches WebGLProgram)
+  const uniforms = useMemo(() => ({
+    uTime: { value: 0 },
+    uWaveHeight: { value: waveHeight },
+    uWaveSpeed: { value: waveSpeed },
+    uWeightTime: { value: 0 },
+    uIsWeightPainting: { value: 0 },
+    uElectricParams: { value: new THREE.Vector3(1, 1, 1) },
+    uWindParams: { value: new THREE.Vector3(1, 1, 1) },
+    uPulseParams: { value: new THREE.Vector3(1, 1, 1) },
+    uJiggleOffset: { value: new THREE.Vector3(0, 0, 0) },
+  }), []);
+
   const textureRef = useRef<THREE.Texture | null>(null);
   const normalTextureRef = useRef<THREE.Texture | null>(null);
 
-  const uTimeRef = useRef<{ value: number } | null>(null);
-  const uWaveHeightRef = useRef<{ value: number } | null>(null);
-  const uWaveSpeedRef = useRef<{ value: number } | null>(null);
+  // Inertial physics state tracking for Jiggle Secondary Motion
+  const prevWorldPos = useRef<THREE.Vector3 | null>(null);
+  const worldVel = useRef(new THREE.Vector3(0, 0, 0));
+  const prevWorldVel = useRef(new THREE.Vector3(0, 0, 0));
+  const jiggleDisp = useRef(new THREE.Vector3(0, 0, 0)); // Spring displacement in world space
+  const jiggleVel = useRef(new THREE.Vector3(0, 0, 0));  // Spring velocity
+  const _tempWorldPos = useMemo(() => new THREE.Vector3(), []);
+  const _tempWorldQuat = useMemo(() => new THREE.Quaternion(), []);
+  const _tempInvQuat = useMemo(() => new THREE.Quaternion(), []);
+  const _tempLocalJiggle = useMemo(() => new THREE.Vector3(), []);
+  const _tempAcc = useMemo(() => new THREE.Vector3(), []);
+  const _tempForce = useMemo(() => new THREE.Vector3(), []);
 
   useEffect(() => {
     textureRef.current = texture;
@@ -822,23 +1062,17 @@ function CustomMaterial({ material }: { material: SceneObject['material'] }) {
   }, [normalTexture]);
 
   useEffect(() => {
-    if (uWaveHeightRef.current) {
-      uWaveHeightRef.current.value = waveHeight;
-    }
-  }, [waveHeight]);
+    uniforms.uWaveHeight.value = waveHeight;
+  }, [waveHeight, uniforms]);
 
   useEffect(() => {
-    if (uWaveSpeedRef.current) {
-      uWaveSpeedRef.current.value = waveSpeed;
-    }
-  }, [waveSpeed]);
+    uniforms.uWaveSpeed.value = waveSpeed;
+  }, [waveSpeed, uniforms]);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
+    const time = state.clock.getElapsedTime();
     if (isWater) {
-      const time = state.clock.getElapsedTime();
-      if (uTimeRef.current) {
-        uTimeRef.current.value = time;
-      }
+      uniforms.uTime.value = time;
       if (textureRef.current) {
         textureRef.current.offset.x = time * 0.015;
         textureRef.current.offset.y = time * 0.015;
@@ -848,47 +1082,137 @@ function CustomMaterial({ material }: { material: SceneObject['material'] }) {
         normalTextureRef.current.offset.y = time * 0.01;
       }
     }
+
+    uniforms.uWeightTime.value = time;
+    uniforms.uIsWeightPainting.value = activeTool === 'weightPaint' ? 1.0 : 0.0;
+
+    if (obj) {
+      uniforms.uElectricParams.value.set(
+        obj.weightEffectSpeedR ?? obj.weightEffectSpeed ?? 1.0,
+        obj.weightEffectStrengthR ?? obj.weightEffectStrength ?? 1.0,
+        obj.weightEffectScaleR ?? obj.weightEffectScale ?? 1.0
+      );
+      uniforms.uWindParams.value.set(
+        obj.weightEffectSpeedG ?? obj.weightEffectSpeed ?? 1.0,
+        obj.weightEffectStrengthG ?? obj.weightEffectStrength ?? 1.0,
+        obj.weightEffectScaleG ?? obj.weightEffectScale ?? 1.0
+      );
+      uniforms.uPulseParams.value.set(
+        obj.weightEffectSpeedB ?? obj.weightEffectSpeed ?? 1.0,
+        obj.weightEffectStrengthB ?? obj.weightEffectStrength ?? 1.0,
+        obj.weightEffectScaleB ?? obj.weightEffectScale ?? 1.0
+      );
+    }
+
+    // Dynamic Inertial Jiggle Physics Simulation (Secondary Motion)
+    const dt = Math.min(delta, 0.05);
+    if (dt > 0.0001) {
+      if (meshRef?.current) {
+        meshRef.current.updateWorldMatrix(true, false);
+        meshRef.current.getWorldPosition(_tempWorldPos);
+        meshRef.current.getWorldQuaternion(_tempWorldQuat);
+      } else if (obj) {
+        _tempWorldPos.set(obj.position[0], obj.position[1], obj.position[2]);
+        _tempWorldQuat.setFromEuler(new THREE.Euler(obj.rotation[0], obj.rotation[1], obj.rotation[2]));
+      }
+
+      if (!prevWorldPos.current) {
+        prevWorldPos.current = _tempWorldPos.clone();
+        worldVel.current.set(0, 0, 0);
+        prevWorldVel.current.set(0, 0, 0);
+      } else {
+        // Calculate velocity (P_t - P_{t-1}) / dt
+        worldVel.current.subVectors(_tempWorldPos, prevWorldPos.current).divideScalar(dt);
+        prevWorldPos.current.copy(_tempWorldPos);
+
+        // Calculate acceleration (V_t - V_{t-1}) / dt
+        _tempAcc.subVectors(worldVel.current, prevWorldVel.current).divideScalar(dt);
+        prevWorldVel.current.copy(worldVel.current);
+
+        // Clamp extreme spikes from teleports / resets
+        _tempAcc.clampLength(0, 80.0);
+        worldVel.current.clampLength(0, 50.0);
+
+        // User parameters from store (sliders range 0.0 to 3.0, default ~1.0)
+        const dampingParam = obj?.weightEffectSpeedA ?? obj?.weightEffectSpeed ?? 1.0;
+        const stiffnessParam = obj?.weightEffectStrengthA ?? obj?.weightEffectStrength ?? 1.0;
+        const scaleParam = obj?.weightEffectScaleA ?? obj?.weightEffectScale ?? 1.0;
+
+        // Stiffness k (natural frequency) and damping c
+        const k = Math.max(8.0, stiffnessParam * 32.0);
+        const c = Math.max(0.5, dampingParam * 4.2);
+
+        // Inertial force: pushes in opposite direction of acceleration and velocity
+        _tempForce
+          .copy(_tempAcc)
+          .multiplyScalar(-0.15 * scaleParam)
+          .addScaledVector(worldVel.current, -0.06 * scaleParam);
+
+        // Spring acceleration = Inertia - k * displacement - c * velocity
+        const springAccX = _tempForce.x - k * jiggleDisp.current.x - c * jiggleVel.current.x;
+        const springAccY = _tempForce.y - k * jiggleDisp.current.y - c * jiggleVel.current.y;
+        const springAccZ = _tempForce.z - k * jiggleDisp.current.z - c * jiggleVel.current.z;
+
+        // Semi-implicit Euler integration
+        jiggleVel.current.x += springAccX * dt;
+        jiggleVel.current.y += springAccY * dt;
+        jiggleVel.current.z += springAccZ * dt;
+
+        jiggleDisp.current.x += jiggleVel.current.x * dt;
+        jiggleDisp.current.y += jiggleVel.current.y * dt;
+        jiggleDisp.current.z += jiggleVel.current.z * dt;
+
+        // Clamp displacement for stability
+        jiggleDisp.current.clampLength(0, 1.2 * Math.max(0.2, scaleParam));
+
+        // Convert world-space displacement into mesh local space
+        _tempInvQuat.copy(_tempWorldQuat).invert();
+        _tempLocalJiggle.copy(jiggleDisp.current).applyQuaternion(_tempInvQuat);
+
+        uniforms.uJiggleOffset.value.copy(_tempLocalJiggle);
+      }
+    }
   });
 
   const customProgramCacheKey = React.useCallback(() => {
-    return isWater ? 'water_material_custom_shader' : 'standard_material';
+    if (isWater) return 'water_material_custom_shader';
+    return 'weight_animated_standard_material';
   }, [isWater]);
 
-  const handleBeforeCompile = React.useCallback((shader: any) => {
-    if (isWater) {
-      shader.uniforms.uTime = { value: 0 };
-      shader.uniforms.uWaveHeight = { value: 0.08 };
-      shader.uniforms.uWaveSpeed = { value: 1.0 };
-      uTimeRef.current = shader.uniforms.uTime;
-      uWaveHeightRef.current = shader.uniforms.uWaveHeight;
-      uWaveSpeedRef.current = shader.uniforms.uWaveSpeed;
+  const handleBeforeCompile = React.useCallback(
+    (shader: any) => {
+      // Connect shader uniforms to persistent memoized uniforms object
+      Object.assign(shader.uniforms, uniforms);
 
-      shader.vertexShader = `
+      if (isWater) {
+        shader.vertexShader =
+          `
         uniform float uTime;
         uniform float uWaveHeight;
         uniform float uWaveSpeed;
         varying float vWaveHeight;
       ` + shader.vertexShader;
 
-      shader.vertexShader = shader.vertexShader.replace(
-        '#include <begin_vertex>',
-        `
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          `
           #include <begin_vertex>
           float wave = sin(position.x * 4.0 + uTime * 2.0 * uWaveSpeed) * uWaveHeight + 
                        cos(position.z * 4.0 + uTime * 1.5 * uWaveSpeed) * uWaveHeight;
           transformed.y += wave;
           vWaveHeight = wave;
         `
-      );
+        );
 
-      shader.fragmentShader = `
+        shader.fragmentShader =
+          `
         uniform float uWaveHeight;
         varying float vWaveHeight;
       ` + shader.fragmentShader;
 
-      shader.fragmentShader = shader.fragmentShader.replace(
-        '#include <map_fragment>',
-        `
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <map_fragment>',
+          `
           #include <map_fragment>
           
           vec3 baseColor = diffuseColor.rgb;
@@ -908,9 +1232,128 @@ function CustomMaterial({ material }: { material: SceneObject['material'] }) {
           
           diffuseColor.rgb = waterColor;
         `
-      );
-    }
-  }, [isWater]);
+        );
+      } else {
+        shader.vertexShader =
+          `
+        uniform float uWeightTime;
+        uniform float uIsWeightPainting;
+        uniform vec3 uElectricParams;
+        uniform vec3 uWindParams;
+        uniform vec3 uPulseParams;
+        uniform vec3 uJiggleOffset;
+        varying vec4 vVertexWeights;
+        varying float vElectricGlow;
+        varying float vPulseGlow;
+      ` + shader.vertexShader;
+
+        shader.vertexShader = shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          `
+          #include <begin_vertex>
+
+          #if defined( USE_COLOR_ALPHA )
+            vVertexWeights = color;
+            float wElectric = color.r;
+            float wWind = color.g;
+            float wPulse = color.b;
+            float wJiggle = color.a;
+          #elif defined( USE_COLOR )
+            vVertexWeights = vec4(color, 0.0);
+            float wElectric = color.r;
+            float wWind = color.g;
+            float wPulse = color.b;
+            float wJiggle = 0.0;
+          #else
+            vVertexWeights = vec4(0.0);
+            float wElectric = 0.0;
+            float wWind = 0.0;
+            float wPulse = 0.0;
+            float wJiggle = 0.0;
+          #endif
+
+          // 1. Wind Sway (Green channel) - organic sine wave sway in X/Z driven by vertex weight
+          if (wWind > 0.001) {
+            float windTime = uWeightTime * uWindParams.x * 2.5;
+            float windWave = sin(windTime + position.y * uWindParams.z * 2.0 + position.x * 1.5) * 
+                             cos(windTime * 0.7 + position.z * 1.2);
+            vec3 windDisplacement = vec3(windWave * 0.25 * uWindParams.y * wWind, 0.0, windWave * 0.15 * uWindParams.y * wWind);
+            transformed += windDisplacement;
+          }
+
+          // 2. Electrical Jitter (Red channel) - high-frequency erratic jitter displacement
+          if (wElectric > 0.001) {
+            float eTime = uWeightTime * uElectricParams.x * 35.0;
+            float jitterX = sin(eTime + position.y * 50.0 * uElectricParams.z) * cos(eTime * 1.3);
+            float jitterY = cos(eTime * 1.2 + position.x * 50.0 * uElectricParams.z);
+            float jitterZ = sin(eTime * 0.9 + position.z * 50.0 * uElectricParams.z);
+            transformed += vec3(jitterX, jitterY, jitterZ) * 0.06 * uElectricParams.y * wElectric;
+            vElectricGlow = wElectric * (0.5 + 0.5 * sin(eTime * 2.0));
+          } else {
+            vElectricGlow = 0.0;
+          }
+
+          // 3. Dynamic Inertial Jiggle Physics (Alpha channel) - real-time movement inertia, jump/throw lag & bounce
+          if (wJiggle > 0.001) {
+            vec3 jiggleDisp = uJiggleOffset * wJiggle;
+            float jiggleMag = length(uJiggleOffset);
+            if (jiggleMag > 0.0001) {
+              float normalAlign = dot(normal, normalize(uJiggleOffset));
+              vec3 bulgeDisp = normal * (normalAlign * jiggleMag * 0.45) * wJiggle;
+              transformed += jiggleDisp + bulgeDisp;
+            } else {
+              transformed += jiggleDisp;
+            }
+          }
+
+          // 4. Pulse Glow (Blue channel)
+          if (wPulse > 0.001) {
+            float pTime = uWeightTime * uPulseParams.x * 3.0;
+            vPulseGlow = wPulse * (0.5 + 0.5 * sin(pTime + length(position) * uPulseParams.z * 2.0)) * uPulseParams.y;
+          } else {
+            vPulseGlow = 0.0;
+          }
+        `
+        );
+
+        shader.fragmentShader =
+          `
+        uniform float uIsWeightPainting;
+        varying vec4 vVertexWeights;
+        varying float vElectricGlow;
+        varying float vPulseGlow;
+      ` + shader.fragmentShader;
+
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <color_fragment>',
+          `
+          #include <color_fragment>
+
+          #if defined( USE_COLOR_ALPHA ) || defined( USE_COLOR )
+          if (uIsWeightPainting > 0.5) {
+            vec3 weightVisual = vec3(0.0);
+            weightVisual += vec3(1.0, 0.2, 0.2) * vVertexWeights.r;
+            weightVisual += vec3(0.1, 0.9, 0.3) * vVertexWeights.g;
+            weightVisual += vec3(0.2, 0.4, 1.0) * vVertexWeights.b;
+            weightVisual += vec3(0.9, 0.2, 0.9) * vVertexWeights.a;
+            
+            float totalWeight = clamp(vVertexWeights.r + vVertexWeights.g + vVertexWeights.b + vVertexWeights.a, 0.0, 1.0);
+            diffuseColor.rgb = mix(diffuseColor.rgb * 0.35, weightVisual, totalWeight);
+          } else {
+            if (vElectricGlow > 0.01) {
+              diffuseColor.rgb += vec3(1.0, 0.35, 0.1) * vElectricGlow * 1.5;
+            }
+            if (vPulseGlow > 0.01) {
+              diffuseColor.rgb += vec3(0.2, 0.5, 1.0) * vPulseGlow * 1.5;
+            }
+          }
+          #endif
+        `
+        );
+      }
+    },
+    [isWater, uniforms]
+  );
 
   if (!material) return null;
 
@@ -942,30 +1385,145 @@ function CustomMaterial({ material }: { material: SceneObject['material'] }) {
       map={texture}
       normalMap={normalTexture}
       wireframe={wireframeMode}
+      vertexColors={true}
       transparent={material.opacity !== undefined && material.opacity < 1.0}
       opacity={material.opacity !== undefined ? material.opacity : 1.0}
+      customProgramCacheKey={customProgramCacheKey}
+      onBeforeCompile={handleBeforeCompile}
     />
+  );
+}
+
+function PrimitiveMeshNode({
+  obj,
+  isPlaying,
+  isSelected,
+  showOverlays,
+  activeTool,
+  isCSGChild,
+}: {
+  obj: SceneObject;
+  isPlaying: boolean;
+  isSelected: boolean;
+  showOverlays: boolean;
+  activeTool: string;
+  isCSGChild?: boolean;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  const isObjWater = !!(
+    obj.material &&
+    (obj.material.map === 'water' ||
+      obj.material.normalMap === 'water' ||
+      (obj.material.map && obj.material.map.includes('waternormals.jpg')) ||
+      (obj.material.normalMap && obj.material.normalMap.includes('waternormals.jpg')))
+  );
+
+  // Synchronize and apply vertex weights onto geometry on mount and on vertexWeights changes
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || !mesh.geometry) return;
+    const geom = mesh.geometry as THREE.BufferGeometry;
+    const count = geom.attributes.position?.count || 0;
+    if (count === 0) return;
+
+    const key = mesh.name || obj.name || 'default';
+    const storedWeights =
+      obj.vertexWeights?.[key] ||
+      obj.vertexWeights?.['default'] ||
+      obj.vertexWeights?.[mesh.uuid] ||
+      (obj.vertexWeights ? Object.values(obj.vertexWeights)[0] : null);
+
+    if (storedWeights && storedWeights.length === count * 4) {
+      const colors = new Float32Array(storedWeights);
+      geom.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+      (geom.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+    } else if (activeTool === 'weightPaint' && !geom.attributes.color) {
+      const colors = new Float32Array(count * 4);
+      colors.fill(0);
+      geom.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+    }
+  }, [obj.vertexWeights, activeTool]);
+
+  const isEyeSphere = !!obj.userData?.isEyeSphere;
+  const objects = useStore((s) => s.objects);
+  const parentObj = useMemo(() => objects.find((o) => o.id === obj.parentId), [objects, obj.parentId]);
+  const eyeRig = parentObj?.eyeRigProps;
+
+  const eyeTexture = useMemo(() => {
+    if (!isEyeSphere) return null;
+    return createEyeCanvasTexture({
+      irisColor: eyeRig?.irisColor || '#2563eb',
+      pupilSize: eyeRig?.pupilSize ?? 0.35,
+      resolution: 512,
+    });
+  }, [isEyeSphere, eyeRig?.irisColor, eyeRig?.pupilSize]);
+
+  const eyeGeometry = useMemo(() => {
+    if (!isEyeSphere) return null;
+    return createEyeballGeometry(0.5, 32);
+  }, [isEyeSphere]);
+
+  if (isEyeSphere) {
+    return (
+      <mesh
+        ref={meshRef}
+        name={obj.name || 'default'}
+        userData={{ id: obj.id }}
+        castShadow
+        receiveShadow
+        visible={!isCSGChild && obj.visible !== false}
+      >
+        {eyeGeometry && <primitive object={eyeGeometry} attach="geometry" />}
+        <meshStandardMaterial
+          map={eyeTexture}
+          roughness={eyeRig?.roughness ?? 0.05}
+          metalness={0.0}
+          envMapIntensity={1.5}
+        />
+        {isSelected && !isPlaying && showOverlays && activeTool !== 'weightPaint' && (
+          <Outlines thickness={0.035} color="#38bdf8" />
+        )}
+      </mesh>
+    );
+  }
+
+  return (
+    <mesh
+      ref={meshRef}
+      name={obj.name || 'default'}
+      userData={{ id: obj.id }}
+      castShadow
+      receiveShadow
+      visible={!isCSGChild && obj.visible !== false}
+    >
+      {renderGeometry(obj.geometry, isObjWater)}
+      {obj.material && <CustomMaterial material={obj.material} obj={obj} meshRef={meshRef} />}
+      {isSelected && !isPlaying && showOverlays && activeTool !== 'weightPaint' && (
+        <Outlines thickness={0.035} color="#38bdf8" />
+      )}
+    </mesh>
   );
 }
 
 function renderGeometry(geometryType?: string, isWater?: boolean) {
   switch (geometryType) {
     case 'box':
-      return <boxGeometry args={[1, 1, 1, isWater ? 16 : 1, isWater ? 16 : 1, isWater ? 16 : 1]} />;
+      return <boxGeometry args={[1, 1, 1, isWater ? 16 : 16, isWater ? 16 : 16, isWater ? 16 : 16]} />;
     case 'sphere':
       return <sphereGeometry args={[0.5, 64, 64]} />;
     case 'plane':
-      return <planeGeometry args={[1, 1, isWater ? 64 : 1, isWater ? 64 : 1]} />;
+      return <planeGeometry args={[1, 1, isWater ? 64 : 32, isWater ? 64 : 32]} />;
     case 'cylinder':
-      return <cylinderGeometry args={[0.5, 0.5, 1, 32]} />;
+      return <cylinderGeometry args={[0.5, 0.5, 1, 32, 16]} />;
     case 'cone':
-      return <coneGeometry args={[0.5, 1, 32]} />;
+      return <coneGeometry args={[0.5, 1, 32, 16]} />;
     case 'torus':
       return <torusGeometry args={[0.5, 0.2, 16, 64]} />;
     case 'torusKnot':
       return <torusKnotGeometry args={[0.4, 0.1, 64, 16]} />;
     case 'ring':
-      return <ringGeometry args={[0.3, 0.6, 32]} />;
+      return <ringGeometry args={[0.3, 0.6, 32, 8]} />;
     case 'wedge':
       return (
         <bufferGeometry>
@@ -1020,6 +1578,7 @@ const _tempQuatA = new THREE.Quaternion();
 const _tempQuatB = new THREE.Quaternion();
 const _tempVecA = new THREE.Vector3();
 const _tempVecB = new THREE.Vector3();
+const _tempUpVector = new THREE.Vector3(0, 1, 0);
 
 const SceneNode = React.memo(function SceneNode({
   obj,
@@ -1047,6 +1606,7 @@ const SceneNode = React.memo(function SceneNode({
   const showEmitters = useStore((state) => state.showEmitters);
   const selectedIds = useStore((state) => state.selectedIds);
   const activeTool = useStore((state) => state.activeTool);
+  const facialWizardActive = useStore((state) => state.facialWizardState.active);
 
   const objects = useStore((state) => state.objects);
   const assets = useAssetStore((state) => state.assets);
@@ -1173,19 +1733,56 @@ const SceneNode = React.memo(function SceneNode({
         } else {
           ref.current.setRotation(_tempQuatA, true);
         }
-      } else if (obj.behavior === 'follow') {
+      } else if (obj.behavior === 'follow' || obj.behavior === 'patrol' || obj.behavior === 'wander' || obj.terrainFollowing) {
         const t = ref.current.translation();
-        _tempVecA.copy(state.camera.position);
-        _tempVecA.y = t.y;
-        _tempVecB.set(t.x, t.y, t.z);
-        _tempVecB.lerp(_tempVecA, delta * 1.5);
-        _tempTranslation.x = _tempVecB.x;
-        _tempTranslation.y = _tempVecB.y;
-        _tempTranslation.z = _tempVecB.z;
+        let targetX = t.x;
+        let targetZ = t.z;
+
+        if (obj.behavior === 'follow') {
+          _tempVecA.copy(state.camera.position);
+          _tempVecB.set(t.x, t.y, t.z);
+          _tempVecB.lerp(_tempVecA, delta * 1.5);
+          targetX = _tempVecB.x;
+          targetZ = _tempVecB.z;
+        } else if (obj.behavior === 'patrol') {
+          const time = state.clock.elapsedTime * 0.8;
+          targetX = initialPos.current[0] + Math.sin(time) * 8.0;
+          targetZ = initialPos.current[2] + Math.cos(time) * 8.0;
+        } else if (obj.behavior === 'wander') {
+          const time = state.clock.elapsedTime * 0.4;
+          targetX = initialPos.current[0] + Math.sin(time) * 6.0;
+          targetZ = initialPos.current[2] + Math.sin(time * 1.7) * 6.0;
+        }
+
+        const terrainTargetY = calculateEntityTerrainTargetY(
+          obj,
+          targetX,
+          targetZ,
+          objects,
+          obj.terrainOffset || 0
+        );
+
+        const lerpSpeed = obj.terrainLerpSpeed || 10.0;
+        const newY = THREE.MathUtils.lerp(t.y, terrainTargetY, Math.min(1.0, delta * lerpSpeed));
+
+        _tempTranslation.x = targetX;
+        _tempTranslation.y = newY;
+        _tempTranslation.z = targetZ;
+
         if (typeof ref.current.setNextKinematicTranslation === 'function') {
           ref.current.setNextKinematicTranslation(_tempTranslation);
         } else {
           ref.current.setTranslation(_tempTranslation, true);
+        }
+
+        if (obj.terrainAlignNormal) {
+          const normal = getTerrainSurfaceNormal(targetX, targetZ, objects, 0.5, _tempAxisY);
+          _tempQuatA.setFromUnitVectors(_tempUpVector, normal);
+          if (typeof ref.current.setNextKinematicRotation === 'function') {
+            ref.current.setNextKinematicRotation(_tempQuatA);
+          } else {
+            ref.current.setRotation(_tempQuatA, true);
+          }
         }
       }
     } else {
@@ -1208,11 +1805,53 @@ const SceneNode = React.memo(function SceneNode({
         _tempQuatB.setFromEuler(_tempEulerB);
         _tempQuatA.multiply(_tempQuatB);
         ref.current.rotation.setFromQuaternion(_tempQuatA);
-      } else if (obj.behavior === 'follow') {
-        _tempVecA.copy(state.camera.position);
-        _tempVecA.y = ref.current.position.y;
-        ref.current.position.lerp(_tempVecA, delta * 1.5);
-        ref.current.lookAt(_tempVecA);
+      } else if (obj.userData?.isEyeSphere) {
+        const parentObj = objects.find((o) => o.id === obj.parentId);
+        if (parentObj?.eyeRigProps?.lookAtMode === 'camera') {
+          _tempVecA.setFromMatrixPosition(state.camera.matrixWorld);
+          ref.current.lookAt(_tempVecA);
+        }
+      } else if (obj.behavior === 'follow' || obj.behavior === 'patrol' || obj.behavior === 'wander' || obj.terrainFollowing) {
+        let targetX = ref.current.position.x;
+        let targetZ = ref.current.position.z;
+
+        if (obj.behavior === 'follow') {
+          _tempVecA.copy(state.camera.position);
+          _tempVecA.y = ref.current.position.y;
+          ref.current.position.lerp(_tempVecA, delta * 1.5);
+          targetX = ref.current.position.x;
+          targetZ = ref.current.position.z;
+          ref.current.lookAt(_tempVecA.x, ref.current.position.y, _tempVecA.z);
+        } else if (obj.behavior === 'patrol') {
+          const time = state.clock.elapsedTime * 0.8;
+          targetX = initialPos.current[0] + Math.sin(time) * 8.0;
+          targetZ = initialPos.current[2] + Math.cos(time) * 8.0;
+          ref.current.position.x = targetX;
+          ref.current.position.z = targetZ;
+        } else if (obj.behavior === 'wander') {
+          const time = state.clock.elapsedTime * 0.4;
+          targetX = initialPos.current[0] + Math.sin(time) * 6.0;
+          targetZ = initialPos.current[2] + Math.sin(time * 1.7) * 6.0;
+          ref.current.position.x = targetX;
+          ref.current.position.z = targetZ;
+        }
+
+        const terrainTargetY = calculateEntityTerrainTargetY(
+          obj,
+          targetX,
+          targetZ,
+          objects,
+          obj.terrainOffset || 0
+        );
+
+        const lerpSpeed = obj.terrainLerpSpeed || 10.0;
+        ref.current.position.y = THREE.MathUtils.lerp(ref.current.position.y, terrainTargetY, Math.min(1.0, delta * lerpSpeed));
+
+        if (obj.terrainAlignNormal) {
+          const normal = getTerrainSurfaceNormal(targetX, targetZ, objects, 0.5, _tempAxisY);
+          _tempQuatA.setFromUnitVectors(_tempUpVector, normal);
+          ref.current.quaternion.slerp(_tempQuatA, Math.min(1.0, delta * 5.0));
+        }
       }
     }
 
@@ -1241,14 +1880,6 @@ const SceneNode = React.memo(function SceneNode({
       rotation={isSimulating ? [0, 0, 0] : obj.rotation}
       scale={obj.scale}
       onPointerDown={(e) => {
-        // Guard: block all pointer events when gizmo handles are focused
-        const gf = useStore.getState().gizmoFocused;
-        console.log(`[SceneNode:${obj.id}] onPointerDown — gizmoFocused=${gf}, button=${e.button}`);
-        if (gf) {
-          console.log(`[SceneNode:${obj.id}] BLOCKED by gizmoFocused guard`);
-          e.stopPropagation();
-          return;
-        }
         if (e.button === 0 && !obj.locked) {
           e.stopPropagation();
           selectObject(obj.id);
@@ -1258,11 +1889,6 @@ const SceneNode = React.memo(function SceneNode({
         }
       }}
       onContextMenu={(e) => {
-        // Guard: block context menu when gizmo is focused
-        if (useStore.getState().gizmoFocused) {
-          e.stopPropagation();
-          return;
-        }
         e.stopPropagation();
 
         if (dragStartRef.current) {
@@ -1280,31 +1906,26 @@ const SceneNode = React.memo(function SceneNode({
       }}
     >
       <>
-        {!isObjFormat(obj) && !isFbxFormat(obj) && !['gltf', 'obj', 'fbx', 'light', 'group', 'csg', 'script', 'texture', 'decal', 'motor6d', 'SUN', 'MOON'].includes(obj.type) && !obj.url && (() => {
-          const isObjWater = !!(obj.material && (
-            obj.material.map === 'water' ||
-            obj.material.normalMap === 'water' ||
-            (obj.material.map && obj.material.map.includes('waternormals.jpg')) ||
-            (obj.material.normalMap && obj.material.normalMap.includes('waternormals.jpg'))
-          ));
+        {!isObjFormat(obj) && !isFbxFormat(obj) && !['gltf', 'obj', 'fbx', 'light', 'group', 'csg', 'script', 'texture', 'decal', 'motor6d', 'SUN', 'MOON', 'empty', 'helper'].includes(obj.type) && !obj.url && !obj.userData?.isFacialMarker && (() => {
+          const isParticle = ['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.type) || ['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.geometry || '');
           return (
-            (['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.type) || ['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.geometry || '')) ? (
+            isParticle ? (
               <ParticleEmitter type={['tornado', 'smoke', 'water', 'sparks', 'fire'].includes(obj.type) ? obj.type : (obj.geometry || '')} isPlaying={isPlaying} particleProps={obj.particleProps} />
             ) : (
-              <mesh castShadow receiveShadow visible={!isCSGChild && obj.visible !== false}>
-                {renderGeometry(obj.geometry, isObjWater)}
-                {isSelected && !isPlaying && showOverlays ? (
-                  <meshBasicMaterial color="#ffffff" wireframe />
-                ) : (
-                  obj.material && <CustomMaterial material={obj.material} />
-                )}
-              </mesh>
+              <PrimitiveMeshNode
+                obj={obj}
+                isPlaying={isPlaying}
+                isSelected={isSelected}
+                showOverlays={showOverlays}
+                activeTool={activeTool}
+                isCSGChild={isCSGChild}
+              />
             )
           );
         })()}
 
         {obj.type === 'csg' && (
-          <mesh castShadow receiveShadow>
+          <mesh userData={{ id: obj.id }} castShadow receiveShadow>
             <Geometry>
               {children.map((child) => {
                 const geom = renderGeometry(child.geometry);
@@ -1320,10 +1941,9 @@ const SceneNode = React.memo(function SceneNode({
                 return <Base key={`csg-${child.id}`} {...props}>{geom}</Base>;
               })}
             </Geometry>
-            {isSelected && !isPlaying && showOverlays ? (
-              <meshBasicMaterial color="#ffffff" wireframe />
-            ) : (
-              obj.material && <CustomMaterial material={obj.material} />
+            {obj.material && <CustomMaterial material={obj.material} obj={obj} />}
+            {isSelected && !isPlaying && showOverlays && activeTool !== 'weightPaint' && (
+              <Outlines thickness={0.035} color="#38bdf8" />
             )}
           </mesh>
         )}
@@ -1460,11 +2080,18 @@ const SceneNode = React.memo(function SceneNode({
 
   // FIX 2: Keep the RigidBody's rotation equal to the object's rotation so
   //         rotated planes (walls, ramps) have correctly-oriented colliders.
-  // FIX 3: Safely omit mass when undefined so Rapier auto-computes it from the colliders.
-  const hasJoints = false;
+  const isKinematicBehavior =
+    obj.behavior === 'spin' ||
+    obj.behavior === 'float' ||
+    obj.behavior === 'buoyancy' ||
+    obj.behavior === 'follow' ||
+    obj.behavior === 'patrol' ||
+    obj.behavior === 'wander' ||
+    obj.terrainFollowing;
+
   const wrapperProps = isSimulating
     ? {
-        type: hasJoints
+        type: isKinematicBehavior
           ? 'kinematicPosition'
           : (obj.anchored || obj.physics === 'fixed' ? 'fixed' : 'dynamic'),
         position: obj.position,
@@ -1534,11 +2161,11 @@ const SceneNode = React.memo(function SceneNode({
         groupContent
       )}
 
-      {isSelected && selectedIds.length === 1 && !isPlaying && activeTool !== 'foliage' && obj.type !== 'group' && (
+      {isSelected && selectedIds.length === 1 && !isPlaying && activeTool !== 'foliage' && activeTool !== 'weightPaint' && transformMode !== 'select' && !facialWizardActive && obj.type !== 'group' && (
         <GizmoWrapper
           objRef={ref}
           objId={obj.id}
-          transformMode={transformMode === 'select' ? 'translate' : transformMode}
+          transformMode={transformMode as 'translate' | 'rotate' | 'scale'}
           snapGrid={snapGrid}
           snapValue={snapValue}
           setOrbitEnabled={setOrbitEnabled}
@@ -1917,7 +2544,9 @@ function MultiSelectionGizmo({
     };
   }, [tc]);
 
-  if (isPlaying || activeTool === 'foliage' || selectedStoreObjects.length <= 1 || !currentCentroid) {
+  const facialWizardActive = useStore((s) => s.facialWizardState.active);
+
+  if (isPlaying || activeTool === 'foliage' || activeTool === 'weightPaint' || transformMode === 'select' || facialWizardActive || selectedStoreObjects.length <= 1 || !currentCentroid) {
     return null;
   }
 
@@ -1928,7 +2557,7 @@ function MultiSelectionGizmo({
         <TransformControls
           ref={setTc}
           object={anchorRef}
-          mode={transformMode === 'select' ? 'translate' : transformMode}
+          mode={(transformMode as any) === 'select' ? 'translate' : (transformMode as any)}
           size={1.35}
           translationSnap={snapGrid ? snapValue : null}
           rotationSnap={snapGrid ? Math.PI / 8 : null}
@@ -2009,125 +2638,33 @@ function MultiSelectionGizmo({
   );
 }
 
-function playProceduralFootstep() {
-  try {
-    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
-    
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    
-    const bufferSize = ctx.sampleRate * 0.08;
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-    
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = 250;
-    filter.Q.value = 3.0;
-    
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    
-    gain.gain.setValueAtTime(0.08, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
-    
-    noise.start();
-    
-    osc.frequency.setValueAtTime(80, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(30, ctx.currentTime + 0.05);
-    
-    const oscGain = ctx.createGain();
-    oscGain.gain.setValueAtTime(0.05, ctx.currentTime);
-    oscGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
-    
-    osc.connect(oscGain);
-    oscGain.connect(ctx.destination);
-    
-    osc.start();
-    osc.stop(ctx.currentTime + 0.06);
-    noise.stop(ctx.currentTime + 0.09);
-  } catch (e) {
-    console.warn('[Audio] Failed to play procedural footstep:', e);
-  }
-}
-
-function playProceduralLanding() {
-  try {
-    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContext) return;
-    const ctx = new AudioContext();
-    
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    
-    const bufferSize = ctx.sampleRate * 0.18;
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-    
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 180;
-    
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(ctx.destination);
-    
-    gain.gain.setValueAtTime(0.25, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
-    
-    noise.start();
-    
-    osc.frequency.setValueAtTime(60, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(20, ctx.currentTime + 0.12);
-    
-    const oscGain = ctx.createGain();
-    oscGain.gain.setValueAtTime(0.2, ctx.currentTime);
-    oscGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-    
-    osc.connect(oscGain);
-    oscGain.connect(ctx.destination);
-    
-    osc.start();
-    osc.stop(ctx.currentTime + 0.13);
-    noise.stop(ctx.currentTime + 0.19);
-  } catch (e) {
-    console.warn('[Audio] Failed to play procedural landing:', e);
-  }
-}
-
-function playLandingSound(url: string) {
-  if (!url || url === '/sounds/footstep.wav') {
-    playProceduralLanding();
-    return;
-  }
-  try {
-    const audio = new Audio(url);
-    audio.volume = 0.45;
-    audio.play().catch(err => {
-      console.warn('[Audio] Play landing sound file failed, falling back:', err);
-      playProceduralLanding();
+function playProceduralFootstep(node?: THREE.Object3D | null, url?: string) {
+  const targetNode = node || SpatialAudioManager.getListener();
+  if (targetNode) {
+    SpatialAudioManager.playOneShot(targetNode, url && url !== '/sounds/footstep.wav' ? url : undefined, {
+      volume: 0.2,
+      intensity: 0.5,
+      refDistance: 1,
+      maxDistance: 25,
     });
-  } catch (e) {
-    console.warn('[Audio] Landing sound error, falling back:', e);
-    playProceduralLanding();
+  }
+}
+
+function playLandingSound(url?: string, node?: THREE.Object3D | null) {
+  const targetNode = node || SpatialAudioManager.getListener();
+  if (targetNode) {
+    SpatialAudioManager.playOneShot(targetNode, url && url !== '/sounds/footstep.wav' ? url : undefined, {
+      volume: 0.45,
+      intensity: 1.2,
+      refDistance: 1,
+      maxDistance: 35,
+    });
   }
 }
 
 function PlayerController() {
-  const { camera } = useThree();
+  const { camera, scene } = useThree();
+  const playerNode = scene.getObjectByName('obj_player') || camera;
   const velocity = useRef(new THREE.Vector3());
   const direction = useRef(new THREE.Vector3());
   const keys = useRef({ w: false, a: false, s: false, d: false, space: false, shift: false, c: false, q: false });
@@ -2393,7 +2930,7 @@ function PlayerController() {
         wasGrounded.current = isGrounded;
 
         if (landed && characterActions.footstepAudioEnabled) {
-          playLandingSound(characterActions.footstepAudioUrl || '/sounds/footstep.wav');
+          playLandingSound(characterActions.footstepAudioUrl, playerNode);
         }
 
         if (isGrounded && moveDir.lengthSq() > 0 && characterActions.footstepAudioEnabled && dashTimeLeft.current <= 0 && !isClimbing.current) {
@@ -2401,7 +2938,7 @@ function PlayerController() {
           footstepTimer.current += delta;
           if (footstepTimer.current >= stepInterval) {
             footstepTimer.current = 0;
-            playProceduralFootstep();
+            playProceduralFootstep(playerNode, characterActions.footstepAudioUrl);
           }
         } else {
           footstepTimer.current = 0;
@@ -2877,7 +3414,7 @@ function BoneVisualizer() {
   }, [workspaceMode, activeClonedScene, scene]);
 
   useFrame(() => {
-    if (helperRef.current) {
+    if (helperRef.current && typeof (helperRef.current as any).update === 'function') {
       (helperRef.current as any).update();
     }
   });
@@ -2893,14 +3430,16 @@ function BoneVisualizer() {
     return found;
   }, [activeClonedScene, selectedBoneId]);
 
-  if (workspaceMode !== 'animation') return null;
+  const facialWizardActive = useStore((s) => s.facialWizardState.active);
+
+  if (workspaceMode !== 'animation' || transformMode === 'select' || facialWizardActive) return null;
 
   return (
     <>
       {selectedBoneObject && (
         <TransformControls
           object={selectedBoneObject}
-          mode={transformMode === 'select' ? 'rotate' : transformMode}
+          mode={transformMode as any}
           size={0.75}
           space="local"
         />
@@ -3042,6 +3581,14 @@ export default function Viewport() {
   const moonObj = objects.find((o) => o.id === 'obj_moon');
   const moonPosition = moonObj ? moonObj.position : [-20, -40, -20];
 
+  const pauseOverlayRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isPlaying && isPaused) {
+      pauseOverlayRef.current?.focus();
+    }
+  }, [isPlaying, isPaused]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.shiftKey && e.key.toLowerCase() === 'h') {
@@ -3058,7 +3605,11 @@ export default function Viewport() {
         useStore.getState().setActiveTool(current === 'foliage' ? 'select' : 'foliage');
       }
       if (e.key === 'Escape' && useStore.getState().isPlaying) {
-        useStore.getState().setPaused(true);
+        if (useStore.getState().isPaused) {
+          useStore.getState().setPaused(false);
+        } else {
+          useStore.getState().setPaused(true);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -3180,6 +3731,7 @@ export default function Viewport() {
       onDrop={handleDrop}
     >
       <AssetStagingIndicator />
+      <FacialWizardHUD />
       {isPickingAsset && (
         <div className="absolute inset-0 bg-neutral-950/45 backdrop-blur-[1px] z-[45] flex flex-col items-center justify-center pointer-events-none select-none">
           <div className="bg-bg-panel/95 backdrop-blur-md border border-accent/40 px-5 py-3.5 rounded-2xl shadow-2xl flex flex-col items-center gap-2 max-w-sm text-center animate-in fade-in zoom-in-95 duration-200">
@@ -3208,16 +3760,18 @@ export default function Viewport() {
         camera={{ position: [5, 5, 5], fov: 50 }}
         events={(state) => ({
           ...events(state),
-          // Gizmo occlusion fix: when a gizmo handle is focused, drop ALL
-          // raycast intersections so R3F never dispatches pointer events to
-          // scene objects behind the gizmo. This is the definitive fix because
-          // it operates at the raycaster result level, before any onPointerDown
-          // handlers fire on scene objects.
+          // Refined Gizmo occlusion filter: Drops raycast intersections ONLY if they are
+          // at or behind the actual distance of the gizmo axis/handle from the camera.
+          // Allows foreground meshes in front of the active gizmo to receive pointer interactions.
           filter: (items: THREE.Intersection[], s: any) => {
-            if (useStore.getState().gizmoFocused) {
-              return []; // Block all scene object interactions
-            }
-            return items;
+            const store = useStore.getState();
+            const selectedObjs = store.objects.filter((o) => store.selectedIds.includes(o.id));
+            return filterGizmoOccludedIntersections(
+              items,
+              store.gizmoFocused,
+              s?.camera || (state as any)?.camera,
+              selectedObjs
+            );
           },
         })}
         onCreated={({ gl }) => {
@@ -3253,6 +3807,9 @@ export default function Viewport() {
               };
             };
           }
+
+          // Register active WebGLRenderer instance for automatic GPU texture purging
+          TextureManager.setRenderer(gl);
         }}
         onPointerMissed={() => {
           // Don't deselect if gizmo is being interacted with
@@ -3291,6 +3848,7 @@ export default function Viewport() {
           <Suspense fallback={null}>
             <DayNightCycle />
             <BoneVisualizer />
+            <FacialWizard3D />
 
             <Physics paused={!isPlaying || isPaused} debug={showPhysicsDebug} gravity={[0, environment.gravity ?? -9.81, 0]}>
               <group name="export_scene">
@@ -3330,7 +3888,9 @@ export default function Viewport() {
         <ExportHelper />
         <FoliageRenderer />
         <FoliagePainterController />
+        <VertexWeightPainterController setOrbitEnabled={setOrbitEnabled} />
         <SpatialAudioSceneController />
+        <SpatialPartitioningController />
         {!isPlaying && <MultiSelectionGizmo setOrbitEnabled={setOrbitEnabled} />}
         {!isPlaying && (
           <MarqueeSelectionController
@@ -3429,8 +3989,17 @@ export default function Viewport() {
       {/* Visually striking glassmorphic Pause Overlay */}
       {isPlaying && isPaused && (
         <div
+          ref={pauseOverlayRef}
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key.toLowerCase() === 'p' || e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              useStore.getState().setPaused(false);
+            }
+          }}
           onClick={() => useStore.getState().setPaused(false)}
-          className="absolute inset-0 bg-neutral-950/60 backdrop-blur-md flex items-center justify-center z-40 select-none animate-in fade-in duration-300 cursor-pointer"
+          className="absolute inset-0 bg-neutral-950/60 backdrop-blur-md flex items-center justify-center z-40 select-none animate-in fade-in duration-300 cursor-pointer outline-none focus:outline-none"
         >
           <div className="bg-bg-panel/40 backdrop-blur-xl border border-white/10 p-8 rounded-2xl flex flex-col items-center gap-6 shadow-2xl max-w-sm text-center transform scale-100 hover:scale-[1.02] transition-transform duration-300 relative overflow-hidden group">
             {/* Ambient inner glow */}
@@ -5079,5 +5648,271 @@ function FoliagePainterController() {
     </mesh>
   );
 }
+
+
+
+function matchesTargetHierarchy(obj3D: THREE.Object3D, targetId: string | null): boolean {
+  if (!targetId) return true;
+  let curr: THREE.Object3D | null = obj3D;
+  while (curr) {
+    if (curr.userData?.id === targetId || curr.name === targetId) return true;
+    curr = curr.parent;
+  }
+  return false;
+}
+
+function VertexWeightPainterController({
+  setOrbitEnabled,
+}: {
+  setOrbitEnabled: (enabled: boolean) => void;
+}) {
+  const { camera, scene, gl } = useThree();
+  const activeTool = useStore((s) => s.activeTool);
+  const weightBrushRadius = useStore((s) => s.weightBrushRadius);
+  const weightBrushStrength = useStore((s) => s.weightBrushStrength);
+  const weightBrushValue = useStore((s) => s.weightBrushValue);
+  const activeWeightChannel = useStore((s) => s.activeWeightChannel);
+  const selectedIds = useStore((s) => s.selectedIds);
+  const animationTargetId = useStore((s) => s.animationTargetId);
+  const objects = useStore((s) => s.objects);
+  const updateObject = useStore((s) => s.updateObject);
+
+  const [isPainting, setIsPainting] = useState(false);
+  const mouse = useRef(new THREE.Vector2(0, 0));
+  const cursorRef = useRef<THREE.Mesh>(null);
+  // Dedicated raycaster so R3F's internal event system cannot overwrite the ray
+  const paintRaycaster = useRef(new THREE.Raycaster());
+
+  const targetObjId = selectedIds[0] || animationTargetId || null;
+  const targetObj = useMemo(() => objects.find((o) => o.id === targetObjId), [objects, targetObjId]);
+
+  // Enable vertexColors on target materials and attach color attribute
+  useEffect(() => {
+    if (activeTool !== 'weightPaint') return;
+
+    const exportScene = scene.getObjectByName('export_scene') || scene;
+    if (!exportScene) return;
+
+    exportScene.traverse((child: any) => {
+      if (child.isMesh && child.geometry) {
+        const isTargetMesh = matchesTargetHierarchy(child, targetObjId);
+        if (isTargetMesh) {
+          const geom = child.geometry as THREE.BufferGeometry;
+          const count = geom.attributes.position?.count || 0;
+          if (count > 0 && !geom.attributes.color) {
+            const colors = new Float32Array(count * 4);
+            const key = child.name || 'default';
+            const storedWeights =
+              targetObj?.vertexWeights?.[key] ||
+              targetObj?.vertexWeights?.['default'] ||
+              targetObj?.vertexWeights?.[child.uuid] ||
+              (targetObj?.vertexWeights ? Object.values(targetObj.vertexWeights)[0] : null);
+            if (storedWeights && storedWeights.length === count * 4) {
+              colors.set(storedWeights);
+            } else {
+              colors.fill(0);
+            }
+            geom.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+          }
+
+          if (child.material) {
+            if (Array.isArray(child.material)) {
+              child.material.forEach((mat: any) => {
+                if (mat) {
+                  mat.vertexColors = true;
+                  mat.needsUpdate = true;
+                }
+              });
+            } else {
+              child.material.vertexColors = true;
+              child.material.needsUpdate = true;
+            }
+          }
+        }
+      }
+    });
+
+    const handleReset = () => {
+      exportScene.traverse((child: any) => {
+        if (child.isMesh && child.geometry && child.geometry.attributes.color) {
+          const colorAttr = child.geometry.attributes.color as THREE.BufferAttribute;
+          (colorAttr.array as Float32Array).fill(0);
+          colorAttr.needsUpdate = true;
+        }
+      });
+    };
+
+    window.addEventListener('weight_paint_reset', handleReset);
+    return () => {
+      window.removeEventListener('weight_paint_reset', handleReset);
+    };
+  }, [activeTool, targetObjId, scene, targetObj?.vertexWeights]);
+
+  // Collect all meshes from the export scene for raycasting
+  const collectRaycastTargets = useCallback(() => {
+    const exportScene = scene.getObjectByName('export_scene') || scene;
+    if (!exportScene) return [];
+    const meshes: THREE.Object3D[] = [];
+    exportScene.traverse((child: any) => {
+      if (child.isMesh && child !== cursorRef.current) meshes.push(child);
+    });
+    return meshes;
+  }, [scene]);
+
+  const paint = useCallback(() => {
+    if (activeTool !== 'weightPaint') return;
+    const targets = collectRaycastTargets();
+    if (targets.length === 0) return;
+
+    paintRaycaster.current.setFromCamera(mouse.current, camera);
+    const intersects = paintRaycaster.current.intersectObjects(targets, false);
+
+    if (intersects.length === 0) return;
+
+    const hit =
+      intersects.find((i) => {
+        const isTargetMesh = matchesTargetHierarchy(i.object, targetObjId);
+        return isTargetMesh && (i.object as any).isMesh && (i.object as any).geometry;
+      }) || ((intersects[0].object as any).isMesh ? intersects[0] : null);
+
+    if (!hit) return;
+
+    const mesh = hit.object as THREE.Mesh;
+    const geom = mesh.geometry as THREE.BufferGeometry;
+    if (!geom || !geom.attributes.position) return;
+
+    applyVertexWeightBrush({
+      mesh,
+      geometry: geom,
+      hitPoint: hit.point,
+      radius: weightBrushRadius,
+      strength: weightBrushStrength,
+      targetValue: weightBrushValue,
+      channel: activeWeightChannel,
+    });
+  }, [
+    activeTool,
+    targetObjId,
+    activeWeightChannel,
+    weightBrushRadius,
+    weightBrushStrength,
+    weightBrushValue,
+    camera,
+    collectRaycastTargets,
+  ]);
+
+  useFrame(() => {
+    if (activeTool !== 'weightPaint') return;
+
+    const targets = collectRaycastTargets();
+    if (targets.length === 0) return;
+
+    paintRaycaster.current.setFromCamera(mouse.current, camera);
+    const intersects = paintRaycaster.current.intersectObjects(targets, false);
+
+    if (intersects.length > 0 && cursorRef.current) {
+      const hit = intersects[0];
+      const normal = hit.face?.normal
+        ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
+        : new THREE.Vector3(0, 1, 0);
+      cursorRef.current.position.copy(hit.point).addScaledVector(normal, 0.005);
+      const lookTarget = cursorRef.current.position.clone().add(normal);
+      cursorRef.current.lookAt(lookTarget);
+      cursorRef.current.visible = true;
+    } else if (cursorRef.current) {
+      cursorRef.current.visible = false;
+    }
+
+    if (isPainting) {
+      paint();
+    }
+  });
+
+  useEffect(() => {
+    if (activeTool !== 'weightPaint') {
+      setIsPainting(false);
+      return;
+    }
+
+    const domElement = gl.domElement;
+
+    const handlePointerDown = (e: PointerEvent) => {
+      if (e.button === 0) {
+        setIsPainting(true);
+        setOrbitEnabled(false);
+        const rect = domElement.getBoundingClientRect();
+        mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      }
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const rect = domElement.getBoundingClientRect();
+      mouse.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+
+    const handlePointerUp = (e: PointerEvent) => {
+      if (e.button === 0) {
+        setIsPainting(false);
+        setOrbitEnabled(true);
+
+        if (targetObjId) {
+          const weightsMap: Record<string, number[]> = {};
+          const exportScene = scene.getObjectByName('export_scene') || scene;
+          if (exportScene) {
+            exportScene.traverse((child: any) => {
+              if (
+                child.isMesh &&
+                child.geometry?.attributes?.color &&
+                matchesTargetHierarchy(child, targetObjId)
+              ) {
+                const key = child.name || 'default';
+                weightsMap[key] = Array.from(child.geometry.attributes.color.array);
+              }
+            });
+            updateObject(targetObjId, { vertexWeights: weightsMap });
+          }
+        }
+      }
+    };
+
+    domElement.addEventListener('pointerdown', handlePointerDown);
+    domElement.addEventListener('pointermove', handlePointerMove);
+    domElement.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      domElement.removeEventListener('pointerdown', handlePointerDown);
+      domElement.removeEventListener('pointermove', handlePointerMove);
+      domElement.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [activeTool, gl.domElement, setOrbitEnabled, targetObjId, scene, updateObject]);
+
+  if (activeTool !== 'weightPaint') return null;
+
+  const channelColor =
+    activeWeightChannel === 'r'
+      ? '#ef4444'
+      : activeWeightChannel === 'g'
+      ? '#10b981'
+      : activeWeightChannel === 'b'
+      ? '#3b82f6'
+      : '#d946ef';
+
+  return (
+    <mesh ref={cursorRef} visible={false} renderOrder={9999}>
+      <ringGeometry args={[Math.max(0.01, weightBrushRadius - 0.04), weightBrushRadius, 64]} />
+      <meshBasicMaterial
+        color={weightBrushValue === 0 ? '#fbbf24' : channelColor}
+        transparent
+        opacity={0.85}
+        depthTest={false}
+        depthWrite={false}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  );
+}
+
 
 

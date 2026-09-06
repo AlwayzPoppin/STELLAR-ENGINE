@@ -273,7 +273,23 @@ class SpatialAudioManagerClass {
     sound.setMaxDistance(options.maxDistance ?? 40);
     sound.setRolloffFactor(options.rolloffFactor ?? 1);
 
-    objectNode.add(sound);
+    if (typeof (objectNode as any).add === 'function') {
+      objectNode.add(sound);
+    } else {
+      // Rapier RigidBody or non-Object3D node fallback: position sound directly
+      const pos =
+        typeof (objectNode as any).translation === 'function'
+          ? (objectNode as any).translation()
+          : (objectNode as any).position;
+      if (pos) {
+        sound.position.set(pos.x ?? pos[0] ?? 0, pos.y ?? pos[1] ?? 0, pos.z ?? pos[2] ?? 0);
+      }
+      if (listener.parent) {
+        listener.parent.add(sound);
+      } else {
+        listener.add(sound);
+      }
+    }
 
     // Auto cleanup once playback finishes
     sound.onEnded = () => {

@@ -21,9 +21,12 @@ import {
   Settings2,
   Sliders,
   Zap,
+  Plus,
 } from 'lucide-react';
 import { toast } from '../store/useToastStore';
 import { animationRegistry, useAnimationRegistry } from '../utils/animationRegistry';
+import { IRIS_COLOR_PRESETS } from '../utils/EyeGeometryLibrary';
+import { FACIAL_LANDMARKS } from '../utils/FacialLandmarks';
 
 export default function AnimationSidebar() {
   const { isLoaded: isRegistryLoaded } = useAnimationRegistry();
@@ -33,6 +36,7 @@ export default function AnimationSidebar() {
     selectObject,
     updateObject,
     activeClonedScene,
+    activeSkeleton,
     animationTargetId,
     selectedBoneId,
     tracks,
@@ -44,12 +48,15 @@ export default function AnimationSidebar() {
     setFacialFocusMode,
     generateFacialRig,
     removeFacialRig,
+    generateEyeRig,
+    removeEyeRig,
+    updateEyeRigProps,
+    facialWizardState,
+    startFacialRigWizard,
     setSelectedBoneId,
     alignFacialRigToMesh,
     flipPoseSymmetrically,
     currentFrame,
-    eyelidsSymmetry,
-    setEyelidsSymmetry,
     activeTool,
     setActiveTool,
     weightBrushRadius,
@@ -64,14 +71,9 @@ export default function AnimationSidebar() {
 
   const roundedFrame = Math.round(currentFrame);
 
-  const [eyelidBone, setEyelidBone] = useState<string>('');
-  const [leftOffset, setLeftOffset] = useState<[number, number, number]>([-0.06, 0.08, 0.09]);
-  const [rightOffset, setRightOffset] = useState<[number, number, number]>([0.06, 0.08, 0.09]);
-  const [eyelidScale, setEyelidScale] = useState<[number, number, number]>([1.0, 1.0, 1.0]);
-  const [eyelidColor, setEyelidColor] = useState<string>('#e29b7a'); // Default skin tone
-  const [eyelidCloseFactor, setEyelidCloseFactor] = useState<number>(0);
   const [expandedRigMap, setExpandedRigMap] = useState<string | null>(null);
   const [confirmRemoveFacialRig, setConfirmRemoveFacialRig] = useState(false);
+  const [confirmRemoveEyeRig, setConfirmRemoveEyeRig] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'bone' | 'face' | 'paint'>('bone');
 
@@ -97,111 +99,34 @@ export default function AnimationSidebar() {
     return list.sort();
   }, [activeClonedScene]);
 
-  useEffect(() => {
-    if (bonesList.length > 0 && !eyelidBone) {
-      const found = bonesList.find((b) => b.toLowerCase().includes('head'));
-      setEyelidBone(found || bonesList[0] || '');
-    }
-  }, [bonesList, eyelidBone]);
-
-  const handleGenerateEyelids = () => {
-    if (!targetObj) return;
-
-    const leftId = `${targetObj.id}_eyelid_left`;
-    const rightId = `${targetObj.id}_eyelid_right`;
-
-    // Filter out existing ones
-    if (objects.some((o) => o.id === leftId)) {
-      deleteObject(leftId);
-    }
-    if (objects.some((o) => o.id === rightId)) {
-      deleteObject(rightId);
-    }
-
-    // Add Left Eyelid
-    addObject({
-      id: leftId,
-      name: `${targetObj.name} Left Eyelid`,
-      type: 'mesh',
-      geometry: 'halfSphere',
-      parentId: targetObj.id,
-      attachedBoneName: eyelidBone,
-      isProceduralEyelid: 'left',
-      eyelidColor: eyelidColor,
-      position: leftOffset,
-      rotation: [-1.2, 0, 0], // Open by default
-      scale: eyelidScale,
-      material: {
-        color: eyelidColor,
-        roughness: 0.6,
-        metalness: 0.1,
-        envMapIntensity: 1.0,
-      },
-    });
-
-    // Add Right Eyelid
-    addObject({
-      id: rightId,
-      name: `${targetObj.name} Right Eyelid`,
-      type: 'mesh',
-      geometry: 'halfSphere',
-      parentId: targetObj.id,
-      attachedBoneName: eyelidBone,
-      isProceduralEyelid: 'right',
-      eyelidColor: eyelidColor,
-      position: rightOffset,
-      rotation: [-1.2, 0, 0], // Open by default
-      scale: eyelidScale,
-      material: {
-        color: eyelidColor,
-        roughness: 0.6,
-        metalness: 0.1,
-        envMapIntensity: 1.0,
-      },
-    });
-
-    toast.success('Procedural eyelids generated and attached successfully!');
-  };
-
-  const handleKeyframeEyelids = () => {
-    if (!targetObj) return;
-    const leftId = `${targetObj.id}_eyelid_left`;
-    const rightId = `${targetObj.id}_eyelid_right`;
-    const rotX = -1.2 * (1 - eyelidCloseFactor);
-    const roundedFrame = Math.round(useStore.getState().currentFrame);
-
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rotX, 0, 0));
-    updateKeyframe(leftId, 'rotation', roundedFrame, [q.x, q.y, q.z, q.w]);
-    updateKeyframe(rightId, 'rotation', roundedFrame, [q.x, q.y, q.z, q.w]);
-
-    toast.success(`Recorded eyelid keyframes at frame ${roundedFrame}`);
-  };
 
 
-
-  // Resolve target object for animation
+  // Resolve target object for animation:
+  // 1. Explicit animationTargetId
+  // 2. Currently selected object in viewport
+  // 3. Fallback to first scene model/mesh
   const targetObj = useMemo(() => {
     if (animationTargetId) {
-      return objects.find((o) => o.id === animationTargetId);
+      const found = objects.find((o) => o.id === animationTargetId);
+      if (found) return found;
     }
-    // Fallback to first selected object if it's gltf/fbx or a child of one
     if (selectedIds.length === 1) {
-      const obj = objects.find((o) => o.id === selectedIds[0]);
-      if (obj) {
-        let curr = obj;
-        const visited = new Set();
-        while (curr && !visited.has(curr.id)) {
-          visited.add(curr.id);
-          if (curr.type === 'gltf' || (curr.type as any) === 'fbx') {
-            return curr;
-          }
-          curr = curr.parentId ? objects.find((o) => o.id === curr.parentId) : null;
-        }
-      }
+      const found = objects.find((o) => o.id === selectedIds[0]);
+      if (found) return found;
     }
-    // Fallback to first gltf/fbx in scene
-    return objects.find((o) => o.type === 'gltf' || (o.type as string) === 'fbx');
+    return objects.find(
+      (o) =>
+        ['mesh', 'gltf', 'obj', 'fbx', 'csg', 'group'].includes(o.type) &&
+        !o.id.startsWith('obj_sun') &&
+        !o.id.startsWith('obj_moon')
+    );
   }, [objects, animationTargetId, selectedIds]);
+
+  useEffect(() => {
+    if (targetObj && targetObj.id !== animationTargetId) {
+      useStore.getState().setAnimationTargetId(targetObj.id);
+    }
+  }, [targetObj?.id, animationTargetId]);
 
   // Extract all unique morph targets on the active cloned scene
   const availableMorphTargets = useMemo(() => {
@@ -366,17 +291,41 @@ export default function AnimationSidebar() {
     <div className="flex-1 flex flex-col h-full bg-[#111116] border-l border-border select-none">
       {/* Target Model Select Indicator */}
       <div className="p-3 bg-bg-panel/40 border-b border-border/80 flex flex-col gap-1.5">
-        <span className="text-[10px] text-text-secondary uppercase font-semibold tracking-wider font-mono">
-          Animation Target Model
-        </span>
-        <div className="flex items-center justify-between bg-bg-deep border border-border px-2 py-1.5 rounded-[4px]">
-          <span className="text-[11px] font-mono text-text-primary truncate">
-            {targetObj ? targetObj.name : 'No Model Selected'}
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-text-secondary uppercase font-semibold tracking-wider font-mono">
+            Animation Target Model
           </span>
-          <span className="text-[9px] uppercase px-1 py-0.5 rounded bg-accent/20 text-accent font-semibold font-mono shrink-0">
-            {targetObj ? targetObj.type.toUpperCase() : 'NONE'}
-          </span>
+          {targetObj && (
+            <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-accent/20 text-accent font-semibold font-mono">
+              {targetObj.type.toUpperCase()}
+            </span>
+          )}
         </div>
+        <select
+          value={targetObj?.id || ''}
+          onChange={(e) => {
+            const newId = e.target.value || null;
+            useStore.getState().setAnimationTargetId(newId);
+            if (newId) {
+              useStore.getState().selectObject(newId);
+            }
+          }}
+          className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1.5 rounded-[4px] text-[11px] font-mono focus:border-accent focus:outline-none transition-colors cursor-pointer"
+        >
+          <option value="">-- No Model Selected --</option>
+          {objects
+            .filter(
+              (o) =>
+                ['mesh', 'gltf', 'obj', 'fbx', 'csg', 'group'].includes(o.type) &&
+                !o.id.startsWith('obj_sun') &&
+                !o.id.startsWith('obj_moon')
+            )
+            .map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.name} ({o.type.toUpperCase()})
+              </option>
+            ))}
+        </select>
       </div>
 
       {/* Tab Switcher Buttons */}
@@ -430,7 +379,45 @@ export default function AnimationSidebar() {
         {activeTab === 'bone' ? (
           /* ─── BONE RIGGING TAB ─── */
           <div className="flex flex-col gap-4">
-            {targetObj && (
+            {targetObj && (!activeSkeleton || activeSkeleton.length === 0) && (
+              <div className="bg-bg-panel/30 border border-fuchsia-500/30 p-3 rounded-lg flex flex-col gap-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-fuchsia-400 uppercase font-semibold font-mono flex items-center gap-1.5">
+                    <FolderTree size={13} />
+                    Quick Rigging
+                  </span>
+                  <span className="text-[9px] font-mono text-neutral-400">Unrigged</span>
+                </div>
+                <p className="text-[10px] text-text-secondary leading-relaxed">
+                  Add bones to <strong className="text-text-primary">{targetObj.name}</strong> to create skeletal animations.
+                </p>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <button
+                    onClick={() => {
+                      const name = prompt('Root bone name:', 'Root');
+                      if (name && name.trim()) {
+                        useStore.getState().addRootBoneToRig(targetObj.id, name.trim());
+                      }
+                    }}
+                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-fuchsia-600 hover:bg-fuchsia-500 text-white rounded text-[10px] font-bold uppercase transition-colors cursor-pointer shadow-sm"
+                  >
+                    <Plus size={11} />
+                    Add Root Bone
+                  </button>
+                  <button
+                    onClick={() => {
+                      useStore.getState().generateBasicRig(targetObj.id);
+                    }}
+                    className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 rounded text-[10px] font-bold uppercase transition-colors cursor-pointer"
+                  >
+                    <Sparkles size={11} className="text-amber-400" />
+                    Auto-Rig
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {targetObj && activeSkeleton && activeSkeleton.length > 0 && (
               <div className="bg-bg-panel/30 border border-border/60 p-3 rounded-lg flex flex-col gap-2">
                 <span className="text-[10px] text-text-secondary uppercase font-semibold font-mono">
                   Symmetry Actions
@@ -660,545 +647,359 @@ export default function AnimationSidebar() {
                 </div>
 
 
-                {/* 1.5. Procedural Eyelids Rigging & Animation */}
+                {/* 1.5. 3D Cinematic Eyeball & Socket Rig */}
                 <div className="bg-bg-panel/20 border border-border/60 p-3 rounded-lg flex flex-col gap-3">
-                  <span className="text-xs font-semibold text-text-primary flex items-center gap-1.5 border-b border-border/40 pb-2">
-                    <Smile size={14} className="text-purple-400" />
-                    Procedural Eyelids
+                  <span className="text-xs font-semibold text-text-primary flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="flex items-center gap-1.5">
+                      <Eye size={14} className="text-blue-400" />
+                      3D Eyeball & Socket Rig
+                    </span>
+                    {targetObj.eyeRigProps?.enabled && (
+                      <span className="text-[9px] bg-blue-500/20 text-blue-300 font-mono px-1.5 py-0.5 rounded border border-blue-500/30">
+                        ACTIVE
+                      </span>
+                    )}
                   </span>
 
-                  {(() => {
-                    const leftId = targetObj ? `${targetObj.id}_eyelid_left` : '';
-                    const rightId = targetObj ? `${targetObj.id}_eyelid_right` : '';
-                    const leftEyelid = objects.find((o) => o.id === leftId);
-                    const rightEyelid = objects.find((o) => o.id === rightId);
-                    const hasEyelids = leftEyelid && rightEyelid;
+                  {!targetObj.eyeRigProps?.enabled ? (
+                    <div className="flex flex-col gap-3 pt-1">
+                      <p className="text-[10px] text-text-secondary">
+                        Replaces flat-textured eye surfaces with recessed 3D sockets, high-gloss physical eyeball spheres, gaze lookAt tracking, and eyelid blinking.
+                      </p>
 
-                    if (!hasEyelids) {
-                      return (
-                        <div className="flex flex-col gap-3 pt-1">
-                          <p className="text-[10px] text-text-secondary">
-                            Generate physical eyelid primitives that attach to the head bone. Perfect for models without morph targets.
-                          </p>
-
-                          {/* Bone Select */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[10px] text-text-secondary">Attach to Joint (Head)</span>
-                            <select
-                              className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1.5 rounded text-[11px] focus:border-accent outline-none cursor-pointer"
-                              value={eyelidBone}
-                              onChange={(e) => setEyelidBone(e.target.value)}
-                            >
-                              {bonesList.map((name) => (
-                                <option key={name} value={name}>
-                                  {name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {/* Color Picker */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[10px] text-text-secondary">Eyelid Color</span>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="color"
-                                className="w-8 h-8 rounded border border-border bg-transparent cursor-pointer animate-none"
-                                value={eyelidColor}
-                                onChange={(e) => setEyelidColor(e.target.value)}
-                              />
-                              <input
-                                type="text"
-                                className="flex-1 bg-bg-deep border border-border text-text-primary px-2 py-1 rounded text-[11px] focus:border-accent outline-none font-mono"
-                                value={eyelidColor}
-                                onChange={(e) => setEyelidColor(e.target.value)}
-                              />
-                            </div>
-                          </div>
-                             {/* Mirror Checkbox */}
-                          <div className="flex items-center gap-1.5 py-1">
-                            <input
-                              type="checkbox"
-                              id="mirrorOffsets"
-                              className="rounded bg-bg-deep border-border text-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
-                              checked={eyelidsSymmetry}
-                              onChange={(e) => setEyelidsSymmetry(e.target.checked)}
-                            />
-                            <label htmlFor="mirrorOffsets" className="text-[10px] text-text-secondary cursor-pointer select-none">
-                              Mirror Left to Right offsets & scale
-                            </label>
-                          </div>
-
-                          {/* Left Eye Offset */}
-                          <div className="flex flex-col gap-1 border-t border-border/20 pt-2">
-                            <span className="text-[10px] font-semibold text-text-secondary">Left Eye Offsets</span>
-                            <div className="grid grid-cols-3 gap-2">
-                              {['X', 'Y', 'Z'].map((axis, idx) => {
-                                const val = leftOffset[idx];
-                                return (
-                                  <div key={axis} className="flex flex-col gap-0.5">
-                                    <span className="text-[9px] text-text-secondary text-center font-mono">{axis}</span>
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      className="w-full bg-bg-deep border border-border text-text-primary px-1.5 py-0.5 rounded text-[10px] text-center focus:border-accent outline-none font-mono"
-                                      value={val}
-                                      onChange={(e) => {
-                                        const newval = parseFloat(e.target.value) || 0;
-                                        const next = [...leftOffset] as [number, number, number];
-                                        next[idx] = newval;
-                                        setLeftOffset(next);
-
-                                        if (eyelidsSymmetry) {
-                                          const rNext = [...rightOffset] as [number, number, number];
-                                          rNext[idx] = idx === 0 ? -newval : newval; // Mirror X
-                                          setRightOffset(rNext);
-                                        }
-                                      }}
-                                    />
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          {/* Right Eye Offset */}
-                          {!eyelidsSymmetry && (
-                            <div className="flex flex-col gap-1">
-                              <span className="text-[10px] font-semibold text-text-secondary">Right Eye Offsets</span>
-                              <div className="grid grid-cols-3 gap-2">
-                                {['X', 'Y', 'Z'].map((axis, idx) => {
-                                  const val = rightOffset[idx];
-                                  return (
-                                    <div key={axis} className="flex flex-col gap-0.5">
-                                      <span className="text-[9px] text-text-secondary text-center font-mono">{axis}</span>
-                                      <input
-                                        type="number"
-                                        step="0.01"
-                                        className="w-full bg-bg-deep border border-border text-text-primary px-1.5 py-0.5 rounded text-[10px] text-center focus:border-accent outline-none font-mono"
-                                        value={val}
-                                        onChange={(e) => {
-                                          const newval = parseFloat(e.target.value) || 0;
-                                          const next = [...rightOffset] as [number, number, number];
-                                          next[idx] = newval;
-                                          setRightOffset(next);
-                                        }}
-                                      />
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Scale Dimensions */}
-                          <div className="flex flex-col gap-1 border-t border-border/20 pt-2">
-                            <span className="text-[10px] font-semibold text-text-secondary">Eyelid Dimensions (Scale)</span>
-                            <div className="grid grid-cols-3 gap-2">
-                              {['X', 'Y', 'Z'].map((axis, idx) => {
-                                const val = eyelidScale[idx];
-                                return (
-                                  <div key={axis} className="flex flex-col gap-0.5">
-                                    <span className="text-[9px] text-text-secondary text-center font-mono">{axis}</span>
-                                    <input
-                                      type="number"
-                                      step="0.005"
-                                      className="w-full bg-bg-deep border border-border text-text-primary px-1.5 py-0.5 rounded text-[10px] text-center focus:border-accent outline-none font-mono"
-                                      value={val}
-                                      onChange={(e) => {
-                                        const newval = parseFloat(e.target.value) || 0.01;
-                                        const next = [...eyelidScale] as [number, number, number];
-                                        next[idx] = newval;
-                                        setEyelidScale(next);
-                                      }}
-                                    />
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-
+                      <button
+                        onClick={() => generateEyeRig(targetObj.id)}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                      >
+                        <Sparkles size={13} />
+                        Generate 3D Eyes & Inset Sockets
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3 pt-1">
+                      {/* 1. Gaze & LookAt Controller */}
+                      <div className="flex flex-col gap-2 bg-bg-deep/40 p-2.5 rounded border border-border/40">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-semibold text-text-secondary uppercase font-mono flex items-center gap-1">
+                            <Activity size={12} className="text-blue-400" />
+                            Gaze Tracking & LookAt
+                          </span>
                           <button
-                            onClick={handleGenerateEyelids}
-                            className="mt-2 w-full bg-accent hover:bg-accent-hover text-white text-xs font-bold py-2 rounded transition-colors cursor-pointer"
+                            onClick={() => {
+                              const newMode = targetObj.eyeRigProps?.lookAtMode === 'camera' ? 'manual' : 'camera';
+                              updateEyeRigProps(targetObj.id, { lookAtMode: newMode });
+                              toast.info(newMode === 'camera' ? 'Eyes locked onto active camera' : 'Manual eye gaze active');
+                            }}
+                            className={`px-2 py-0.5 rounded text-[9px] font-bold transition-all cursor-pointer ${
+                              targetObj.eyeRigProps?.lookAtMode === 'camera'
+                                ? 'bg-blue-600 text-white shadow'
+                                : 'bg-bg-deep border border-border text-text-secondary hover:text-white'
+                            }`}
                           >
-                            Generate Eyelids
+                            {targetObj.eyeRigProps?.lookAtMode === 'camera' ? 'TRACKING CAMERA' : 'TRACK CAMERA'}
                           </button>
                         </div>
-                      );
-                    } else {
-                      return (
-                        <div className="flex flex-col gap-3 pt-1">
-                          <div className="bg-emerald-500/10 border border-emerald-500/20 p-2 rounded text-[10px] text-emerald-300">
-                            Procedural eyelids successfully attached to bone <strong>{leftEyelid.attachedBoneName}</strong>.
-                          </div>
 
-                          {/* Symmetry Mode Toggle */}
-                          <div className="flex items-center gap-1.5 border-t border-border/20 pt-2">
-                            <input
-                              type="checkbox"
-                              id="eyelidsSymmetryActive"
-                              className="rounded bg-bg-deep border-border text-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
-                              checked={eyelidsSymmetry}
-                              onChange={(e) => setEyelidsSymmetry(e.target.checked)}
-                            />
-                            <label htmlFor="eyelidsSymmetryActive" className="text-[10px] text-text-secondary cursor-pointer select-none">
-                              Symmetry Mode (Gizmo & Viewport)
-                            </label>
-                          </div>
-
-                          {/* Eyelid Selection & Focus */}
-                          <div className="flex flex-col gap-1 border-t border-border/20 pt-2">
-                            <span className="text-[10px] font-semibold text-text-secondary">Select & Focus Eyelids</span>
-                            <div className="grid grid-cols-2 gap-2 mt-1">
-                              <button
-                                onClick={() => {
-                                  selectObject(leftId);
-                                  setTimeout(() => {
-                                    window.dispatchEvent(new CustomEvent('focus_camera'));
-                                  }, 50);
-                                  toast.info('Selected and focused Left Eyelid');
-                                }}
-                                className={`px-2.5 py-1.5 rounded text-[10px] font-medium border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                                  selectedIds.includes(leftId)
-                                    ? 'bg-accent/25 border-accent text-white font-bold'
-                                    : 'bg-bg-deep border-border/60 text-text-secondary hover:text-white hover:border-border'
-                                }`}
-                              >
-                                <Eye size={12} className={selectedIds.includes(leftId) ? "text-accent" : "text-text-secondary"} />
-                                <span>Left Eyelid</span>
-                              </button>
-                              <button
-                                onClick={() => {
-                                  selectObject(rightId);
-                                  setTimeout(() => {
-                                    window.dispatchEvent(new CustomEvent('focus_camera'));
-                                  }, 50);
-                                  toast.info('Selected and focused Right Eyelid');
-                                }}
-                                className={`px-2.5 py-1.5 rounded text-[10px] font-medium border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                                  selectedIds.includes(rightId)
-                                    ? 'bg-accent/25 border-accent text-white font-bold'
-                                    : 'bg-bg-deep border-border/60 text-text-secondary hover:text-white hover:border-border'
-                                }`}
-                              >
-                                <Eye size={12} className={selectedIds.includes(rightId) ? "text-accent" : "text-text-secondary"} />
-                                <span>Right Eyelid</span>
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Eyelid Color Pick / Sync */}
-                          <div className="flex flex-col gap-1">
-                            <span className="text-[10px] text-text-secondary">Eyelid Color</span>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="color"
-                                className="w-8 h-8 rounded border border-border bg-transparent cursor-pointer"
-                                value={leftEyelid.material?.color || eyelidColor}
-                                onChange={(e) => {
-                                  const col = e.target.value;
-                                  updateObject(leftId, { material: { ...leftEyelid.material, color: col } });
-                                  updateObject(rightId, { material: { ...rightEyelid.material, color: col } });
-                                }}
-                              />
-                              <span className="text-[10px] text-text-secondary font-mono">
-                                {leftEyelid.material?.color || '#000000'}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Eyelid Close Factor Slider */}
-                          <div className="flex flex-col gap-1 border-t border-border/20 pt-2">
-                            <div className="flex items-center justify-between text-[10px] text-text-secondary">
-                              <span>Eyelid Close Factor</span>
-                              <div className="flex items-center gap-1.5">
+                        {targetObj.eyeRigProps?.lookAtMode !== 'camera' && (
+                          <div className="flex flex-col gap-2 mt-1">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center justify-between text-[9px] text-text-secondary">
+                                <span>Look Horizontal (Yaw)</span>
                                 <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
-                                  {Math.round(eyelidCloseFactor * 100)}%
+                                  {(targetObj.eyeRigProps?.lookYaw ?? 0).toFixed(0)}°
                                 </span>
-
-                                {/* Keyframe Button */}
-                                <button
-                                  onClick={handleKeyframeEyelids}
-                                  className="p-1 rounded bg-bg-deep hover:text-white border border-border/60 transition-all cursor-pointer"
-                                  title="Add Eyelids Keyframe"
-                                >
-                                  <Key size={11} className="text-amber-400" />
-                                </button>
                               </div>
-                            </div>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              className="w-full accent-purple-500 h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
-                              value={eyelidCloseFactor}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value);
-                                setEyelidCloseFactor(val);
-                                const rotX = -1.2 * (1 - val);
-                                updateObject(leftId, { rotation: [rotX, 0, 0] });
-                                updateObject(rightId, { rotation: [rotX, 0, 0] });
-                              }}
-                            />
-                          </div>
-
-                          {/* Auto-Blinking System */}
-                          <div className="flex flex-col gap-2.5 border-t border-border/20 pt-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-semibold text-text-secondary uppercase font-mono">Auto-Blinking System</span>
                               <input
-                                type="checkbox"
-                                className="rounded bg-bg-deep border-border text-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
-                                checked={targetObj.blinkingProps?.enabled ?? false}
-                                onChange={(e) => {
-                                  const current = targetObj.blinkingProps || {};
-                                  updateObject(targetObj.id, {
-                                    blinkingProps: {
-                                      ...current,
-                                      enabled: e.target.checked,
-                                    },
-                                  });
-                                }}
+                                type="range"
+                                min="-35"
+                                max="35"
+                                step="1"
+                                className="w-full accent-blue-500 h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
+                                value={targetObj.eyeRigProps?.lookYaw ?? 0}
+                                onChange={(e) => updateEyeRigProps(targetObj.id, { lookYaw: parseFloat(e.target.value) })}
                               />
                             </div>
 
-                            {(targetObj.blinkingProps?.enabled) && (
-                              <div className="flex flex-col gap-2.5 pl-1.5 border-l border-accent/20">
-                                {/* Blink Speed (Duration) */}
-                                <div className="flex flex-col gap-1">
-                                  <div className="flex items-center justify-between text-[9px] text-text-secondary">
-                                    <span>Blink Speed (Duration)</span>
-                                    <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
-                                      {(targetObj.blinkingProps?.duration ?? 0.16).toFixed(2)}s
-                                    </span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="0.05"
-                                    max="1.0"
-                                    step="0.01"
-                                    className="w-full accent-accent h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
-                                    value={targetObj.blinkingProps?.duration ?? 0.16}
-                                    onChange={(e) => {
-                                      const current = targetObj.blinkingProps || {};
-                                      updateObject(targetObj.id, {
-                                        blinkingProps: {
-                                          ...current,
-                                          duration: parseFloat(e.target.value),
-                                        },
-                                      });
-                                    }}
-                                  />
-                                </div>
-
-                                {/* Max Blinks per Loop */}
-                                <div className="flex flex-col gap-1">
-                                  <div className="flex items-center justify-between text-[9px] text-text-secondary">
-                                    <span>Max Blinks per Loop</span>
-                                    <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
-                                      {targetObj.blinkingProps?.maxBlinks ?? 1}
-                                    </span>
-                                  </div>
-                                  <input
-                                    type="range"
-                                    min="1"
-                                    max="4"
-                                    step="1"
-                                    className="w-full accent-accent h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
-                                    value={targetObj.blinkingProps?.maxBlinks ?? 1}
-                                    onChange={(e) => {
-                                      const current = targetObj.blinkingProps || {};
-                                      updateObject(targetObj.id, {
-                                        blinkingProps: {
-                                          ...current,
-                                          maxBlinks: parseInt(e.target.value) || 1,
-                                        },
-                                      });
-                                    }}
-                                  />
-                                </div>
-
-                                {/* Blink Mode / Pattern */}
-                                <div className="flex flex-col gap-1">
-                                  <span className="text-[9px] text-text-secondary">Blink Pattern</span>
-                                  <select
-                                    className="w-full bg-bg-deep border border-border text-text-primary px-2 py-1 rounded text-[10px] focus:border-accent outline-none cursor-pointer"
-                                    value={targetObj.blinkingProps?.blinkPattern || 'fixed'}
-                                    onChange={(e) => {
-                                      const current = targetObj.blinkingProps || {};
-                                      updateObject(targetObj.id, {
-                                        blinkingProps: {
-                                          ...current,
-                                          blinkPattern: e.target.value as any,
-                                        },
-                                      });
-                                    }}
-                                  >
-                                    <option value="fixed">Fixed (Always max count)</option>
-                                    <option value="random">Random (1 to max count)</option>
-                                    <option value="alternating">Alternating (1 then max count)</option>
-                                  </select>
-                                </div>
-
-                                {/* Interval Range (Min/Max) */}
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div className="flex flex-col gap-1">
-                                    <div className="flex items-center justify-between text-[9px] text-text-secondary">
-                                      <span>Min Delay</span>
-                                      <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
-                                        {(targetObj.blinkingProps?.intervalMin ?? 3.0).toFixed(1)}s
-                                      </span>
-                                    </div>
-                                    <input
-                                      type="range"
-                                      min="0.5"
-                                      max="10"
-                                      step="0.5"
-                                      className="w-full accent-accent h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
-                                      value={targetObj.blinkingProps?.intervalMin ?? 3.0}
-                                      onChange={(e) => {
-                                        const current = targetObj.blinkingProps || {};
-                                        updateObject(targetObj.id, {
-                                          blinkingProps: {
-                                            ...current,
-                                            intervalMin: parseFloat(e.target.value),
-                                          },
-                                        });
-                                      }}
-                                    />
-                                  </div>
-                                  <div className="flex flex-col gap-1">
-                                    <div className="flex items-center justify-between text-[9px] text-text-secondary">
-                                      <span>Max Delay</span>
-                                      <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
-                                        {(targetObj.blinkingProps?.intervalMax ?? 5.0).toFixed(1)}s
-                                      </span>
-                                    </div>
-                                    <input
-                                      type="range"
-                                      min="1.0"
-                                      max="20"
-                                      step="0.5"
-                                      className="w-full accent-accent h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
-                                      value={targetObj.blinkingProps?.intervalMax ?? 5.0}
-                                      onChange={(e) => {
-                                        const current = targetObj.blinkingProps || {};
-                                        updateObject(targetObj.id, {
-                                          blinkingProps: {
-                                            ...current,
-                                            intervalMax: parseFloat(e.target.value),
-                                          },
-                                        });
-                                      }}
-                                    />
-                                  </div>
-                                </div>
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center justify-between text-[9px] text-text-secondary">
+                                <span>Look Vertical (Pitch)</span>
+                                <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
+                                  {(targetObj.eyeRigProps?.lookPitch ?? 0).toFixed(0)}°
+                                </span>
                               </div>
-                            )}
-                          </div>
+                              <input
+                                type="range"
+                                min="-25"
+                                max="25"
+                                step="1"
+                                className="w-full accent-blue-500 h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
+                                value={targetObj.eyeRigProps?.lookPitch ?? 0}
+                                onChange={(e) => updateEyeRigProps(targetObj.id, { lookPitch: parseFloat(e.target.value) })}
+                              />
+                            </div>
 
-                          {/* Action Buttons */}
-                          <div className="flex gap-2 mt-2">
-                            <button
-                              onClick={() => {
-                                // Reset local states to defaults
-                                setLeftOffset([-0.06, 0.08, 0.09]);
-                                setRightOffset([0.06, 0.08, 0.09]);
-                                setEyelidScale([1.0, 1.0, 1.0]);
-                                setEyelidColor('#e29b7a');
-                                setEyelidCloseFactor(0);
-                                setEyelidsSymmetry(true);
-
-                                // Update existing scene objects in store
-                                updateObject(leftId, {
-                                  position: [-0.06, 0.08, 0.09],
-                                  rotation: [-1.2, 0, 0],
-                                  scale: [1.0, 1.0, 1.0],
-                                  material: {
-                                    color: '#e29b7a',
-                                    roughness: 0.6,
-                                    metalness: 0.1,
-                                    envMapIntensity: 1.0,
+                            <div className="flex gap-1.5 mt-1">
+                              <button
+                                onClick={() => updateEyeRigProps(targetObj.id, { lookYaw: 0, lookPitch: 0 })}
+                                className="flex-1 bg-bg-deep hover:bg-white/5 border border-border text-[9px] font-semibold py-1 rounded text-text-secondary hover:text-white transition-all cursor-pointer"
+                              >
+                                Center Gaze
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const yawRad = THREE.MathUtils.degToRad(targetObj.eyeRigProps?.lookYaw || 0);
+                                  const pitchRad = THREE.MathUtils.degToRad(targetObj.eyeRigProps?.lookPitch || 0);
+                                  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(pitchRad, yawRad, 0));
+                                  const f = Math.round(useStore.getState().currentFrame);
+                                  if (targetObj.eyeRigProps?.leftEyeObjId) {
+                                    updateKeyframe(targetObj.eyeRigProps.leftEyeObjId, 'rotation', f, [q.x, q.y, q.z, q.w]);
                                   }
-                                });
-                                updateObject(rightId, {
-                                  position: [0.06, 0.08, 0.09],
-                                  rotation: [-1.2, 0, 0],
-                                  scale: [1.0, 1.0, 1.0],
-                                  material: {
-                                    color: '#e29b7a',
-                                    roughness: 0.6,
-                                    metalness: 0.1,
-                                    envMapIntensity: 1.0,
+                                  if (targetObj.eyeRigProps?.rightEyeObjId) {
+                                    updateKeyframe(targetObj.eyeRigProps.rightEyeObjId, 'rotation', f, [q.x, q.y, q.z, q.w]);
                                   }
-                                });
-
-                                // Reset character's auto-blinking props to defaults
-                                if (targetObj) {
-                                  updateObject(targetObj.id, {
-                                    blinkingProps: {
-                                      enabled: false,
-                                      duration: 0.16,
-                                      maxBlinks: 1,
-                                      blinkPattern: 'fixed',
-                                      intervalMin: 3.0,
-                                      intervalMax: 5.0,
-                                      mode: 'texture',
-                                    }
-                                  });
-                                }
-
-                                toast.success('Eyelid settings reset to default.');
-                              }}
-                              className="flex-1 border border-border hover:bg-white/5 text-text-secondary hover:text-white text-xs font-bold py-1.5 rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer font-sans"
-                            >
-                              <RefreshCw size={12} />
-                              Reset Settings
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                // Delete meshes from scene
-                                deleteObject(leftId);
-                                deleteObject(rightId);
-
-                                // Reset local sidebar states to defaults
-                                setLeftOffset([-0.06, 0.08, 0.09]);
-                                setRightOffset([0.06, 0.08, 0.09]);
-                                setEyelidScale([1.0, 1.0, 1.0]);
-                                setEyelidColor('#e29b7a');
-                                setEyelidCloseFactor(0);
-                                setEyelidsSymmetry(true);
-
-                                // Reset character's auto-blinking props to defaults in store
-                                if (targetObj) {
-                                  updateObject(targetObj.id, {
-                                    blinkingProps: {
-                                      enabled: false,
-                                      duration: 0.16,
-                                      maxBlinks: 1,
-                                      blinkPattern: 'fixed',
-                                      intervalMin: 3.0,
-                                      intervalMax: 5.0,
-                                      mode: 'texture',
-                                    }
-                                  });
-                                }
-
-                                toast.info('Procedural eyelids removed.');
-                              }}
-                              className="flex-1 border border-rose-500/30 hover:bg-rose-500/10 text-rose-400 text-xs font-bold py-1.5 rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer font-sans"
-                            >
-                              <Trash2 size={12} />
-                              Delete Eyelids
-                            </button>
+                                  toast.success(`Keyframed eye gaze at frame ${f}`);
+                                }}
+                                className="px-2.5 bg-bg-deep hover:bg-white/5 border border-border text-[9px] font-semibold py-1 rounded text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-all cursor-pointer"
+                                title="Keyframe Eye Gaze"
+                              >
+                                <Key size={10} />
+                                Keyframe
+                              </button>
+                            </div>
                           </div>
+                        )}
+                      </div>
+
+                      {/* 2. Iris & PBR Eye Appearance */}
+                      <div className="flex flex-col gap-2 border-t border-border/20 pt-2">
+                        <span className="text-[10px] font-semibold text-text-secondary uppercase font-mono flex items-center gap-1">
+                          <Palette size={12} className="text-purple-400" />
+                          Iris & Cornea Appearance
+                        </span>
+
+                        {/* Presets */}
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {IRIS_COLOR_PRESETS.map((preset) => (
+                            <button
+                              key={preset.name}
+                              onClick={() => updateEyeRigProps(targetObj.id, { irisColor: preset.hex })}
+                              className={`h-6 rounded border transition-all flex items-center justify-center cursor-pointer ${
+                                targetObj.eyeRigProps?.irisColor === preset.hex
+                                  ? 'border-white scale-105 shadow'
+                                  : 'border-transparent opacity-80 hover:opacity-100'
+                              }`}
+                              style={{ backgroundColor: preset.hex }}
+                              title={preset.name}
+                            />
+                          ))}
                         </div>
-                      );
-                    }
-                  })()}
+
+                        {/* Custom Color & Pupil */}
+                        <div className="flex items-center gap-2 mt-1">
+                          <input
+                            type="color"
+                            className="w-7 h-7 rounded border border-border bg-transparent cursor-pointer"
+                            value={targetObj.eyeRigProps?.irisColor || '#2563eb'}
+                            onChange={(e) => updateEyeRigProps(targetObj.id, { irisColor: e.target.value })}
+                          />
+                          <input
+                            type="text"
+                            className="flex-1 bg-bg-deep border border-border text-text-primary px-2 py-1 rounded text-[10px] focus:border-accent outline-none font-mono"
+                            value={targetObj.eyeRigProps?.irisColor || '#2563eb'}
+                            onChange={(e) => updateEyeRigProps(targetObj.id, { irisColor: e.target.value })}
+                          />
+                        </div>
+
+                        {/* Pupil Dilation */}
+                        <div className="flex flex-col gap-1 mt-1">
+                          <div className="flex items-center justify-between text-[9px] text-text-secondary">
+                            <span>Pupil Dilation</span>
+                            <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
+                              {((targetObj.eyeRigProps?.pupilSize ?? 0.35) * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.15"
+                            max="0.85"
+                            step="0.02"
+                            className="w-full accent-blue-500 h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
+                            value={targetObj.eyeRigProps?.pupilSize ?? 0.35}
+                            onChange={(e) => updateEyeRigProps(targetObj.id, { pupilSize: parseFloat(e.target.value) })}
+                          />
+                        </div>
+
+                        {/* Eye Sphere Scale */}
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center justify-between text-[9px] text-text-secondary">
+                            <span>Eye Scale</span>
+                            <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
+                              {(targetObj.eyeRigProps?.eyeScale ?? 0.18).toFixed(3)}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.01"
+                            max="0.5"
+                            step="0.005"
+                            className="w-full accent-blue-500 h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
+                            value={targetObj.eyeRigProps?.eyeScale ?? 0.18}
+                            onChange={(e) => updateEyeRigProps(targetObj.id, { eyeScale: parseFloat(e.target.value) })}
+                          />
+                        </div>
+                      </div>
+
+                      {/* 3. Recessed Socket Depth Tuning */}
+                      <div className="flex flex-col gap-2 border-t border-border/20 pt-2">
+                        <span className="text-[10px] font-semibold text-text-secondary uppercase font-mono flex items-center gap-1">
+                          <Sliders size={12} className="text-amber-400" />
+                          Socket Inset Tuning
+                        </span>
+
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center justify-between text-[9px] text-text-secondary">
+                            <span>Socket Depth (Recess into Head)</span>
+                            <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
+                              {(targetObj.eyeRigProps?.socketDepth ?? 0.035).toFixed(3)}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="-0.2"
+                            max="0.5"
+                            step="0.005"
+                            className="w-full accent-amber-500 h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
+                            value={targetObj.eyeRigProps?.socketDepth ?? 0.035}
+                            onChange={(e) => updateEyeRigProps(targetObj.id, { socketDepth: parseFloat(e.target.value) })}
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center justify-between text-[9px] text-text-secondary">
+                            <span>Socket Radius</span>
+                            <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
+                              {(targetObj.eyeRigProps?.socketRadius ?? 0.045).toFixed(3)}
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.01"
+                            max="0.5"
+                            step="0.005"
+                            className="w-full accent-amber-500 h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
+                            value={targetObj.eyeRigProps?.socketRadius ?? 0.045}
+                            onChange={(e) => updateEyeRigProps(targetObj.id, { socketRadius: parseFloat(e.target.value) })}
+                          />
+                        </div>
+                      </div>
+
+                      {/* 4. Blinking & Auto-Blink */}
+                      <div className="flex flex-col gap-2 border-t border-border/20 pt-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-semibold text-text-secondary uppercase font-mono">
+                            Auto-Blinking Engine
+                          </span>
+                          <input
+                            type="checkbox"
+                            className="rounded bg-bg-deep border-border text-accent focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                            checked={targetObj.eyeRigProps?.autoBlink ?? true}
+                            onChange={(e) => updateEyeRigProps(targetObj.id, { autoBlink: e.target.checked })}
+                          />
+                        </div>
+
+                        {targetObj.eyeRigProps?.autoBlink && (
+                          <div className="flex flex-col gap-2 pl-1.5 border-l border-blue-500/30">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center justify-between text-[9px] text-text-secondary">
+                                <span>Blink Duration</span>
+                                <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
+                                  {(targetObj.eyeRigProps?.autoBlinkDuration ?? 0.14).toFixed(2)}s
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0.08"
+                                max="0.35"
+                                step="0.01"
+                                className="w-full accent-accent h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
+                                value={targetObj.eyeRigProps?.autoBlinkDuration ?? 0.14}
+                                onChange={(e) => updateEyeRigProps(targetObj.id, { autoBlinkDuration: parseFloat(e.target.value) })}
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center justify-between text-[9px] text-text-secondary">
+                                <span>Blink Delay Interval</span>
+                                <span className="font-mono text-text-primary bg-bg-deep px-1 rounded">
+                                  {(targetObj.eyeRigProps?.autoBlinkIntervalMin ?? 3.5).toFixed(1)}s
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min="1.0"
+                                max="10.0"
+                                step="0.5"
+                                className="w-full accent-accent h-1 rounded-lg bg-neutral-800 appearance-none cursor-pointer"
+                                value={targetObj.eyeRigProps?.autoBlinkIntervalMin ?? 3.5}
+                                onChange={(e) => updateEyeRigProps(targetObj.id, { autoBlinkIntervalMin: parseFloat(e.target.value) })}
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 5. Action Buttons */}
+                      <div className="flex gap-2 border-t border-border/20 pt-3">
+                        <button
+                          onClick={() => {
+                            updateEyeRigProps(targetObj.id, {
+                              irisColor: '#2563eb',
+                              pupilSize: 0.35,
+                              lookYaw: 0,
+                              lookPitch: 0,
+                              socketDepth: 0.035,
+                              socketRadius: 0.045,
+                              autoBlink: true,
+                              lookAtMode: 'manual',
+                            });
+                            toast.success('3D Eye settings reset to default');
+                          }}
+                          className="flex-1 border border-border hover:bg-white/5 text-text-secondary hover:text-white text-xs font-bold py-1.5 rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer font-sans"
+                        >
+                          <RefreshCw size={12} />
+                          Reset
+                        </button>
+
+                        {!confirmRemoveEyeRig ? (
+                          <button
+                            onClick={() => setConfirmRemoveEyeRig(true)}
+                            className="flex-1 border border-rose-500/30 hover:bg-rose-500/10 text-rose-400 text-xs font-bold py-1.5 rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer font-sans"
+                          >
+                            <Trash2 size={12} />
+                            Remove Eyes
+                          </button>
+                        ) : (
+                          <div className="flex-1 flex gap-1">
+                            <button
+                              onClick={() => {
+                                removeEyeRig(targetObj.id);
+                                setConfirmRemoveEyeRig(false);
+                              }}
+                              className="flex-1 bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold py-1.5 rounded transition-colors cursor-pointer"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => setConfirmRemoveEyeRig(false)}
+                              className="px-2 bg-bg-deep hover:bg-white/5 border border-border text-text-secondary text-[11px] rounded cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* 1.75. Facial Control Rig (Auto-Generated Bones) */}
@@ -1212,87 +1013,88 @@ export default function AnimationSidebar() {
                     // Auto-detect head bone name
                     const headBoneName = bonesList.find((b) => b.toLowerCase().includes('head')) || null;
 
-                    if (!targetObj.hasFacialRig) {
-                      return (
-                        <div className="flex flex-col gap-3 pt-1">
-                          <p className="text-[10px] text-text-secondary">
-                            Generate 13 animatable control bones on the face (eyebrows, eyes, cheeks, nose, jaw, lips, chin). Bones auto-attach to the Head joint.
-                          </p>
+                    const mappedLandmarks =
+                      targetObj.userData?.facialLandmarks || facialWizardState.placedLandmarks || {};
+                    const mappedCount = Object.keys(mappedLandmarks).length;
 
-                          {headBoneName ? (
-                            <div className="bg-cyan-500/10 border border-cyan-500/20 p-2 rounded text-[10px] text-cyan-300 flex items-center gap-1.5">
-                              <Skull size={11} />
-                              Head bone detected: <strong>{headBoneName}</strong>
-                            </div>
-                          ) : (
-                            <div className="bg-amber-500/10 border border-amber-500/20 p-2 rounded text-[10px] text-amber-300">
-                              ⚠ No head bone detected. Load a rigged character first.
-                            </div>
-                          )}
-
-                          <button
-                            disabled={!headBoneName}
-                            onClick={() => {
-                              generateFacialRig(targetObj.id);
-                              toast.success('Facial control rig generated — 13 bones added to head');
-                            }}
-                            className={`w-full text-xs font-bold py-2 rounded transition-colors cursor-pointer ${
-                              headBoneName
-                                ? 'bg-cyan-600 hover:bg-cyan-700 text-white'
-                                : 'bg-bg-deep text-text-secondary cursor-not-allowed opacity-50'
-                            }`}
-                          >
-                            Generate Facial Rig
-                          </button>
-
-                          <p className="text-[9px] text-text-secondary/70 italic">
-                            Tip: If bones are offset, use Unbind Skeleton → reposition bones → Rebind Skeleton to correct alignment.
-                          </p>
+                    return (
+                      <div className="flex flex-col gap-3 pt-1">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="text-text-secondary">Calibrated Face Points:</span>
+                          <span className="font-mono bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.2 rounded font-bold">
+                            {mappedCount} / 12 Mapped
+                          </span>
                         </div>
-                      );
-                    } else {
-                      const facialBoneNames = [
-                        'Face_BrowLeft', 'Face_BrowRight',
-                        'Face_EyeLeft', 'Face_EyeRight',
-                        'Face_CheekLeft', 'Face_CheekRight',
-                        'Face_NoseBridge',
-                        'Face_Jaw',
-                        'Face_LipUpper', 'Face_LipLower',
-                        'Face_LipCornerLeft', 'Face_LipCornerRight',
-                        'Face_Chin',
-                      ];
 
-                      return (
-                        <div className="flex flex-col gap-3 pt-1">
-                          <div className="bg-emerald-500/10 border border-emerald-500/20 p-2 rounded text-[10px] text-emerald-300">
-                            ✓ Facial rig active — {facialBoneNames.length} control bones attached to <strong>{headBoneName || 'Head'}</strong>
-                          </div>
+                        {/* Interactive Landmark List */}
+                        <div className="flex flex-col gap-1 max-h-48 overflow-y-auto pr-1">
+                          {FACIAL_LANDMARKS.map((lm) => {
+                            const pos = mappedLandmarks[lm.key] || facialWizardState.placedLandmarks[lm.key];
+                            const isPlaced = !!pos;
+                            const isSelected = selectedBoneId === lm.boneName;
 
-                          {/* Compact bone grid — click to select */}
-                          <div className="grid grid-cols-2 gap-1">
-                            {facialBoneNames.map((name) => (
+                            return (
                               <button
-                                key={name}
-                                onClick={() => setSelectedBoneId(name)}
-                                className="text-[9px] font-mono px-1.5 py-1 rounded border border-border/40 bg-bg-deep/60 text-text-secondary hover:text-cyan-300 hover:border-cyan-500/40 transition-all text-left truncate cursor-pointer"
-                                title={`Select ${name} in viewport`}
+                                key={lm.key}
+                                onClick={() => {
+                                  setSelectedBoneId(lm.boneName);
+                                  setFacialFocusMode(true);
+                                }}
+                                className={`flex items-center justify-between px-2 py-1.5 rounded text-left transition-all border cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-cyan-600/30 border-cyan-500/60 text-cyan-200 shadow-sm'
+                                    : isPlaced
+                                    ? 'bg-bg-deep border-border/60 hover:border-cyan-500/40 text-text-secondary hover:text-white'
+                                    : 'bg-bg-deep/40 border-border/30 text-text-secondary/50 hover:text-text-secondary'
+                                }`}
                               >
-                                {name.replace('Face_', '')}
-                              </button>
-                            ))}
-                          </div>
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isPlaced ? 'bg-emerald-400' : 'bg-neutral-600'}`} />
+                                  <span className="text-[10px] font-medium truncate">{lm.label}</span>
+                                </div>
 
-                          {/* Auto-Align Face Rig */}
+                                {pos ? (
+                                  <span className="font-mono text-[8px] bg-neutral-900/90 text-cyan-300 px-1 rounded border border-cyan-500/20 shrink-0 ml-1">
+                                    [{pos[0].toFixed(2)}, {pos[1].toFixed(2)}, {pos[2].toFixed(2)}]
+                                  </span>
+                                ) : (
+                                  <span className="font-mono text-[8px] text-neutral-600 uppercase shrink-0">
+                                    unmapped
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Launch / Recalibrate Wizard */}
+                        <button
+                          onClick={() => startFacialRigWizard(targetObj.id)}
+                          className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-cyan-900/20"
+                        >
+                          <Sparkles size={13} className="text-cyan-200" />
+                          {targetObj.hasFacialRig || mappedCount > 0
+                            ? 'Recalibrate Face Points (Wizard)'
+                            : 'Rig Face Setup Wizard (Interactive)'}
+                        </button>
+
+                        {/* Secondary: Auto-Align / Auto-Generate */}
+                        {headBoneName && (
                           <button
                             onClick={() => {
-                              alignFacialRigToMesh(targetObj.id);
+                              if (targetObj.hasFacialRig) {
+                                alignFacialRigToMesh(targetObj.id);
+                              } else {
+                                generateFacialRig(targetObj.id);
+                                toast.success('Facial control rig generated — 13 bones added to head');
+                              }
                             }}
-                            className="w-full bg-cyan-600/20 hover:bg-cyan-600/35 border border-cyan-500/30 text-cyan-300 text-xs font-bold py-1.5 rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                            title="Auto-align bones to character face mesh surface using AI projection"
+                            className="w-full bg-bg-deep hover:bg-white/5 border border-border text-text-secondary hover:text-white text-[11px] font-semibold py-1.5 rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
                           >
-                            <Sparkles size={12} className="text-cyan-400" />
-                            Auto-Align Face Rig (AI Projection)
+                            <Sliders size={12} className="text-text-secondary" />
+                            {targetObj.hasFacialRig ? 'Auto-Align Bones (AI Projection)' : 'Quick Auto-Generate'}
                           </button>
+                        )}
 
                           {/* Remove Facial Rig */}
                           {!confirmRemoveFacialRig ? (
@@ -1329,8 +1131,7 @@ export default function AnimationSidebar() {
                           </p>
                         </div>
                       );
-                    }
-                  })()}
+                    })()}
                 </div>
 
                 {/* 2. Facial Blend Shapes & Pose Controls */}

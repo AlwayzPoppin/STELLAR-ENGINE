@@ -172,6 +172,16 @@ export function initConsoleInterceptor() {
   });
 
   window.addEventListener('unhandledrejection', (event) => {
+    // Ignore transient browser pointer lock exit-reentry timing SecurityError
+    const reasonMsg = event.reason ? String(event.reason?.message || event.reason) : '';
+    if (
+      event.reason?.name === 'SecurityError' &&
+      reasonMsg.includes('Pointer lock cannot be acquired immediately')
+    ) {
+      event.preventDefault();
+      return;
+    }
+
     setTimeout(() => {
       const reason = event.reason ? safeStringify(event.reason) : 'Unknown promise rejection';
       useLogStore.getState().addLog('error', `[Unhandled Promise Rejection] ${reason}`);

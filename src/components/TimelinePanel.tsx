@@ -26,6 +26,41 @@ function getCleanTrackName(name: string): string {
   return name;
 }
 
+// WeakMap cache for memoizing parsed and sorted keyframe frame numbers from track.keyframes
+const keyframeFramesCache = new WeakMap<object, number[]>();
+
+export function getCachedKeyframeFrames(keyframes: Record<number, any> | any[] | undefined, maxFrames?: number): number[] {
+  if (!keyframes || typeof keyframes !== 'object') return [];
+
+  let frames = keyframeFramesCache.get(keyframes);
+  if (!frames) {
+    if (Array.isArray(keyframes)) {
+      frames = keyframes
+        .map((k: any, idx: number) => {
+          if (k && typeof k === 'object' && typeof k.frame === 'number') {
+            return k.frame;
+          }
+          if (k !== undefined) return idx;
+          return null;
+        })
+        .filter((f): f is number => f !== null && f >= 0)
+        .sort((a, b) => a - b);
+    } else {
+      frames = Object.keys(keyframes)
+        .map(Number)
+        .filter((f) => !isNaN(f) && f >= 0)
+        .sort((a, b) => a - b);
+    }
+    keyframeFramesCache.set(keyframes, frames);
+  }
+
+  if (maxFrames !== undefined && frames.length > 0 && frames[frames.length - 1] > maxFrames) {
+    return frames.filter((f) => f <= maxFrames);
+  }
+
+  return frames;
+}
+
 const extractKeyframeValue = (track: any, frame: number) => {
   if (!track || !track.keyframes) return undefined;
   if (Array.isArray(track.keyframes)) {
@@ -133,21 +168,8 @@ const TimelineTrackRow = React.memo(function TimelineTrackRow({
 
   const keyframeEntries = React.useMemo(() => {
     if (!track || !track.keyframes) return [];
-    if (Array.isArray(track.keyframes)) {
-      return track.keyframes
-        .map((k: any, idx: number) => {
-          if (k && typeof k === 'object' && typeof k.frame === 'number') {
-            return k.frame;
-          }
-          if (k !== undefined) return idx;
-          return null;
-        })
-        .filter((f): f is number => f !== null && f >= 0 && f <= maxFrames);
-    }
-    return Object.keys(track.keyframes)
-      .map(Number)
-      .filter((f) => !isNaN(f) && f >= 0 && f <= maxFrames);
-  }, [track, maxFrames]);
+    return getCachedKeyframeFrames(track.keyframes, maxFrames);
+  }, [track?.keyframes, maxFrames]);
 
   const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -403,12 +425,25 @@ export default function TimelinePanel() {
   const [saveMode, setSaveMode] = React.useState<'overwrite' | 'new'>('overwrite');
 
   const animationTargetId = useStore((s) => s.animationTargetId);
+  const selectedIds = useStore((s) => s.selectedIds);
   const modelAnimations = useStore((s) => s.modelAnimations);
 
-  const targetObj = React.useMemo(() => 
-    objects.find(o => o.id === animationTargetId), 
-    [objects, animationTargetId]
-  );
+  const targetObj = React.useMemo(() => {
+    if (animationTargetId) {
+      const found = objects.find((o) => o.id === animationTargetId);
+      if (found) return found;
+    }
+    if (selectedIds.length === 1) {
+      const found = objects.find((o) => o.id === selectedIds[0]);
+      if (found) return found;
+    }
+    return objects.find(
+      (o) =>
+        ['mesh', 'gltf', 'obj', 'fbx', 'csg', 'group'].includes(o.type) &&
+        !o.id.startsWith('obj_sun') &&
+        !o.id.startsWith('obj_moon')
+    );
+  }, [objects, animationTargetId, selectedIds]);
 
   const availableClips = React.useMemo(() => {
     if (!targetObj) return [];
@@ -525,7 +560,7 @@ export default function TimelinePanel() {
     if (filterSelectedOnly && selectedBoneId) {
       return tracks.filter((t) => {
         if (t.boneName === selectedBoneId) return true;
-        if (facialFocusMode && (t.property === 'expression' || t.boneName.includes('eyelid') || t.boneName.startsWith('Face_'))) return true;
+        if (facialFocusMode && (t.property === 'expression' || t.boneName.toLowerCase().includes('face') || t.boneName.startsWith('Face_'))) return true;
         return false;
       });
     }
@@ -553,12 +588,12 @@ export default function TimelinePanel() {
   const keyframesSet = React.useMemo(() => {
     const set = new Set<number>();
     tracks.forEach((track) => {
-      Object.keys(track.keyframes || {}).forEach((frameStr) => {
-        const frameNum = parseInt(frameStr, 10);
-        if (!isNaN(frameNum)) {
-          set.add(frameNum);
+      if (track.keyframes) {
+        const frames = getCachedKeyframeFrames(track.keyframes);
+        for (let i = 0; i < frames.length; i++) {
+          set.add(frames[i]);
         }
-      });
+      }
     });
     return set;
   }, [tracks]);
@@ -1036,9 +1071,7 @@ export default function TimelinePanel() {
                     disabled={!clipboard || clipboard.type !== 'single' || clipboard.property !== prop}
                     onClick={() => {
                       if (clipboard && clipboard.type === 'single') {
-                        const frameNumbers = Array.isArray(track?.keyframes)
-                          ? track.keyframes.map((k: any) => k && typeof k === 'object' && 'frame' in k ? k.frame : null).filter((f: any) => f !== null) as number[]
-                          : Object.keys(track?.keyframes || {}).map(Number);
+                        const frameNumbers = getCachedKeyframeFrames(track?.keyframes);
                         console.log("[Keyframe Clipboard] Pasting to all frames:", frameNumbers, "value:", clipboard.value);
                         frameNumbers.forEach((f) => {
                           updateKeyframe(contextMenu.boneName, prop, f, clipboard.value);

@@ -73,3 +73,41 @@ describe('BottomPanel and TimelinePanel direct DOM resizing', () => {
     expect(setTimelineHeight).toHaveBeenCalledWith(350);
   });
 });
+
+describe('BottomPanel bulk asset import toast aggregation', () => {
+  it('should emit a single aggregate toast notification when bulk-importing multiple files', async () => {
+    const { toast } = await import('../store/useToastStore');
+    const toastSuccessSpy = vi.spyOn(toast, 'success');
+    const { importFilesBatch } = await import('./BottomPanel');
+
+    // Create 12 mock files
+    const mockFiles: File[] = [];
+    for (let i = 1; i <= 12; i++) {
+      const file = new File(['mock content'], `texture_${i}.png`, { type: 'image/png' });
+      mockFiles.push(file);
+    }
+
+    const result = await importFilesBatch(mockFiles);
+
+    expect(result.successCount).toBe(12);
+    expect(result.failCount).toBe(0);
+
+    // Should emit exactly 1 aggregate toast notification
+    expect(toastSuccessSpy).toHaveBeenCalledTimes(1);
+    expect(toastSuccessSpy).toHaveBeenCalledWith('Imported 12 assets into My Assets');
+  });
+
+  it('should emit individual asset name when importing a single file', async () => {
+    const { toast } = await import('../store/useToastStore');
+    const toastSuccessSpy = vi.spyOn(toast, 'success');
+    const { importFilesBatch } = await import('./BottomPanel');
+
+    const file = new File(['mock content'], `single_model.glb`, { type: 'model/gltf-binary' });
+    const result = await importFilesBatch([file]);
+
+    expect(result.successCount).toBe(1);
+    expect(toastSuccessSpy).toHaveBeenCalledTimes(1);
+    expect(toastSuccessSpy).toHaveBeenCalledWith('Imported single_model.glb into My Assets');
+  });
+});
+

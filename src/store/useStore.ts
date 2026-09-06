@@ -7,6 +7,37 @@ import { resolveProxiedUrl } from '../utils/format';
 import { routeIntent, FocusScope } from './offlineRouter';
 import { SerializationManager, safeSerializeObjectsSync, sanitizeObjectsSync } from '../utils/SerializationManager';
 import * as THREE from 'three';
+import { calculateEyeCenters, applyEyeSocketInset, restoreOriginalEyeSocketMesh } from '../utils/EyeSocketManager';
+import { FACIAL_LANDMARKS } from '../utils/FacialLandmarks';
+
+export interface FacialWizardState {
+  active: boolean;
+  currentStepIndex: number;
+  placedLandmarks: Record<string, [number, number, number]>;
+  symmetryMode: boolean;
+  targetObjectId: string | null;
+}
+
+export interface EyeRigProps {
+  enabled: boolean;
+  leftEyeObjId?: string;
+  rightEyeObjId?: string;
+  socketDepth: number;
+  socketRadius: number;
+  eyeScale: number;
+  irisColor: string;
+  pupilSize: number;
+  roughness: number;
+  lookAtMode: 'manual' | 'camera';
+  lookYaw: number;
+  lookPitch: number;
+  blinkLeft: number;
+  blinkRight: number;
+  autoBlink: boolean;
+  autoBlinkDuration: number;
+  autoBlinkIntervalMin: number;
+  autoBlinkIntervalMax: number;
+}
 
 // Module-level cache for SkinnedMesh bind state during unbind/rebind workflow.
 // Keyed by mesh UUID; entries are created on unbind and consumed on rebind.
@@ -84,7 +115,7 @@ export interface AssistantPatch {
   targetName: string;
   before: Record<string, any>;
   after: Record<string, any>;
-  cmd?: 'add_object' | 'delete_object' | 'add_quest' | 'add_scripted_event' | 'set_game_variable';
+  cmd?: 'add_object' | 'delete_object' | 'add_quest' | 'add_scripted_event' | 'set_game_variable' | 'paint_foliage';
   params?: Record<string, any>;
 }
 
@@ -168,8 +199,6 @@ export type SceneObject = {
   csgMode?: 'base' | 'addition' | 'subtraction' | 'intersection';
   attachedBoneName?: string;
   gltfNodeName?: string;
-  isProceduralEyelid?: 'left' | 'right';
-  eyelidColor?: string;
   material?: {
     color: string;
     roughness: number;
@@ -225,7 +254,11 @@ export type SceneObject = {
     rayDecay?: number;
     rayExposure?: number;
   };
-  behavior?: 'none' | 'spin' | 'float' | 'follow' | 'buoyancy';
+  behavior?: 'none' | 'spin' | 'float' | 'follow' | 'buoyancy' | 'patrol' | 'wander';
+  terrainFollowing?: boolean;
+  terrainOffset?: number;
+  terrainAlignNormal?: boolean;
+  terrainLerpSpeed?: number;
   characterActions?: {
     autoJump: boolean;
     doubleJump: boolean;
@@ -370,6 +403,7 @@ export type SceneObject = {
   weightEffectStrengthA?: number;
   weightEffectScaleA?: number;
   hasFacialRig?: boolean;
+  eyeRigProps?: EyeRigProps;
   health?: number;
   lastHitType?: string | null;
   combatStats?: {
@@ -410,6 +444,7 @@ export type SceneObject = {
     knockup?: string | null;
     death?: string | null;
   };
+  userData?: Record<string, any>;
 };
 
 export interface BoneNode {
@@ -715,6 +750,16 @@ export interface StoreState {
   toggleOverlays: () => void;
   showPhysicsDebug: boolean;
   togglePhysicsDebug: () => void;
+  spatialPartitioningEnabled: boolean;
+  toggleSpatialPartitioning: () => void;
+  spatialStructureType: 'octree' | 'bvh';
+  setSpatialStructureType: (type: 'octree' | 'bvh') => void;
+  frustumCullingEnabled: boolean;
+  toggleFrustumCulling: () => void;
+  showSpatialDebug: boolean;
+  toggleSpatialDebug: () => void;
+  spatialStats: { total: number; visible: number; culled: number; queryTimeMs: number };
+  setSpatialStats: (stats: { total: number; visible: number; culled: number; queryTimeMs: number }) => void;
   showEmitters: boolean;
   toggleEmitters: () => void;
   wireframeMode: boolean;
@@ -880,8 +925,6 @@ export interface StoreState {
   setSelectedBoneId: (id: string | null) => void;
   riggingSymmetry: boolean;
   setRiggingSymmetry: (val: boolean) => void;
-  eyelidsSymmetry: boolean;
-  setEyelidsSymmetry: (val: boolean) => void;
   tracks: AnimationTrack[];
   setTracks: (tracks: AnimationTrack[]) => void;
   updateKeyframe: (boneName: string, property: 'position' | 'rotation' | 'scale' | 'morph' | 'expression', frame: number, value: any) => void;
@@ -915,12 +958,26 @@ export interface StoreState {
   flipPoseSymmetrically: () => void;
   weaponSocket: 'none' | 'baseball_bat' | 'knife';
   setWeaponSocket: (socket: 'none' | 'baseball_bat' | 'knife') => void;
+  addRootBoneToRig: (targetObjId: string, boneName?: string) => void;
+  generateBasicRig: (targetObjId: string) => void;
   addBoneToRig: (parentBoneName: string, newBoneName: string) => void;
   deleteBoneFromRig: (boneName: string) => void;
   renameBone: (oldName: string, newName: string) => void;
-  generateFacialRig: (targetObjId: string) => void;
+  generateFacialRig: (targetObjId: string, customOffsets?: Record<string, [number, number, number]>) => void;
   removeFacialRig: (targetObjId: string) => void;
   alignFacialRigToMesh: (targetObjId: string) => void;
+  generateEyeRig: (targetObjId: string, customPositions?: any) => void;
+  removeEyeRig: (targetObjId: string) => void;
+  updateEyeRigProps: (targetObjId: string, updates: Partial<EyeRigProps>) => void;
+  facialWizardState: FacialWizardState;
+  startFacialRigWizard: (targetObjId: string) => void;
+  setFacialWizardLandmark: (landmarkKey: string, localPos: [number, number, number]) => void;
+  nextFacialWizardStep: () => void;
+  prevFacialWizardStep: () => void;
+  skipFacialWizardStep: () => void;
+  cancelFacialRigWizard: () => void;
+  finishFacialRigWizard: () => void;
+  toggleFacialWizardSymmetry: () => void;
   // Meshy AI 3D Generation & Auto-Rigging Pipeline
   meshyApiKey: string;
   setMeshyApiKey: (key: string) => void;
@@ -1339,6 +1396,32 @@ export const getTerrainWorldHeightAt = (
   }
 
   return null;
+};
+
+export const getSceneTerrainHeightAt = (
+  worldX: number,
+  worldZ: number,
+  objects: SceneObject[],
+  defaultFallbackY: number = 0
+): number => {
+  const terrainObjects = objects.filter(
+    (o) =>
+      o.geometry === 'plane' &&
+      (o.id === 'obj_3' || o.name === 'Ground Plane' || o.heightData) &&
+      !isDescendantOf(o.id, 'asset_vault', objects)
+  );
+
+  let highestTerrain: number | null = null;
+  for (const terrain of terrainObjects) {
+    const height = getTerrainWorldHeightAt(worldX, worldZ, terrain);
+    if (height !== null) {
+      if (highestTerrain === null || height > highestTerrain) {
+        highestTerrain = height;
+      }
+    }
+  }
+
+  return highestTerrain !== null ? highestTerrain : defaultFallbackY;
 };
 
 const updateActivePlayerOnHierarchyChange = (objects: SceneObject[], currentActivePlayerId: string | null): string | null => {
@@ -1845,6 +1928,16 @@ export const useStore = create<EngineState>()(
         }),
       showPhysicsDebug: false,
       togglePhysicsDebug: () => set((state) => ({ showPhysicsDebug: !state.showPhysicsDebug })),
+      spatialPartitioningEnabled: true,
+      toggleSpatialPartitioning: () => set((state) => ({ spatialPartitioningEnabled: !state.spatialPartitioningEnabled })),
+      spatialStructureType: 'octree',
+      setSpatialStructureType: (type: 'octree' | 'bvh') => set({ spatialStructureType: type }),
+      frustumCullingEnabled: true,
+      toggleFrustumCulling: () => set((state) => ({ frustumCullingEnabled: !state.frustumCullingEnabled })),
+      showSpatialDebug: false,
+      toggleSpatialDebug: () => set((state) => ({ showSpatialDebug: !state.showSpatialDebug })),
+      spatialStats: { total: 0, visible: 0, culled: 0, queryTimeMs: 0 },
+      setSpatialStats: (stats) => set({ spatialStats: stats }),
       showEmitters: true,
       toggleEmitters: () => set((state) => ({ showEmitters: !state.showEmitters })),
       wireframeMode: false,
@@ -1897,20 +1990,20 @@ export const useStore = create<EngineState>()(
             }
           } else if (mode === 'animation') {
             updates.activeScriptId = null;
-            if (!state.animationTargetId) {
-              const selectedId = state.selectedIds[0];
-              const selectedObj = selectedId ? state.objects.find((o) => o.id === selectedId) : null;
-              if (selectedObj) {
-                let curr = selectedObj;
-                const visited = new Set();
-                while (curr && !visited.has(curr.id)) {
-                  visited.add(curr.id);
-                  if (curr.type === 'gltf' || (curr.type as any) === 'fbx') {
-                    updates.animationTargetId = curr.id;
-                    break;
-                  }
-                  curr = curr.parentId ? state.objects.find((o) => o.id === curr.parentId) : null;
-                }
+            const selectedId = state.selectedIds[0];
+            const selectedObj = selectedId ? state.objects.find((o) => o.id === selectedId) : null;
+            if (selectedObj) {
+              updates.animationTargetId = selectedObj.id;
+            } else if (!state.animationTargetId) {
+              const firstObj = state.objects.find(
+                (o) =>
+                  ['mesh', 'gltf', 'obj', 'fbx', 'csg', 'group'].includes(o.type) &&
+                  !o.id.startsWith('obj_sun') &&
+                  !o.id.startsWith('obj_moon')
+              );
+              if (firstObj) {
+                updates.animationTargetId = firstObj.id;
+                updates.selectedIds = [firstObj.id];
               }
             }
           } else if (mode === 'logic') {
@@ -2382,7 +2475,11 @@ export const useStore = create<EngineState>()(
         defaultRestPoses: { ...state.defaultRestPoses, [objId]: pose }
       })),
       animationVersion: 0,
-      setAnimationTargetId: (id) => set({ animationTargetId: id }),
+      setAnimationTargetId: (id) =>
+        set((state) => ({
+          animationTargetId: id,
+          selectedIds: id ? [id] : state.selectedIds,
+        })),
       currentFrame: 0,
       setCurrentFrame: (frame) => {
         set({ currentFrame: frame });
@@ -2514,6 +2611,41 @@ export const useStore = create<EngineState>()(
               });
             } else if (patch.cmd === 'set_game_variable' && patch.params) {
               get().setGameVariable(patch.params.key, patch.params.value);
+            } else if (patch.cmd === 'paint_foliage' && patch.params) {
+              const preset = patch.params.preset || 'procedural:pine_tree';
+              const count = Number(patch.params.count) || 200;
+              const radius = Number(patch.params.radius) || 40;
+              const center = patch.params.center || [0, 0, 0];
+
+              const newInstances: FoliageInstanceData[] = [];
+              const allObjects = get().objects;
+
+              for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.sqrt(Math.random()) * radius;
+                const x = center[0] + Math.cos(angle) * dist;
+                const z = center[2] + Math.sin(angle) * dist;
+                const terrainY = getSceneTerrainHeightAt(x, z, allObjects, 0);
+
+                const rotY = Math.random() * Math.PI * 2;
+                const scaleBase = 0.8 + Math.random() * 0.4;
+                const scale: [number, number, number] = [
+                  scaleBase,
+                  scaleBase * (0.9 + Math.random() * 0.2),
+                  scaleBase,
+                ];
+
+                newInstances.push({
+                  id: `foliage_ai_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
+                  assetUrl: preset,
+                  position: [x, terrainY, z],
+                  rotation: [0, rotY, 0],
+                  scale,
+                });
+              }
+
+              get().addFoliageInstances(newInstances);
+              toast.success('Foliage Painted', `Added ${newInstances.length} foliage instances via AI Assistant.`);
             } else {
               if (patch.targetId === 'environment') {
                 get().updateEnvironment(patch.after);
@@ -2735,8 +2867,6 @@ export const useStore = create<EngineState>()(
       setSelectedBoneId: (id) => set({ selectedBoneId: id }),
       riggingSymmetry: false,
       setRiggingSymmetry: (val) => set({ riggingSymmetry: val }),
-      eyelidsSymmetry: true,
-      setEyelidsSymmetry: (val) => set({ eyelidsSymmetry: val }),
       tracks: [],
       setTracks: (tracks) => set({ tracks }),
       updateKeyframe: (boneName, property, frame, value) =>
@@ -3186,6 +3316,208 @@ export const useStore = create<EngineState>()(
       weaponSocket: 'none',
       setWeaponSocket: (socket) => set({ weaponSocket: socket }),
 
+      addRootBoneToRig: (targetObjId, boneName = 'Root') => {
+        let scene = get().activeClonedScene;
+        const obj = get().objects.find((o) => o.id === targetObjId);
+        if (!obj) {
+          toast.error('Rigging Error', 'Target object not found');
+          return;
+        }
+
+        if (!scene) {
+          scene = new THREE.Group();
+          scene.name = 'rigged_group';
+          set({ activeClonedScene: scene });
+        }
+
+        const rootBone = new THREE.Bone();
+        rootBone.name = boneName.trim() || 'Root';
+        rootBone.position.set(0, 0, 0);
+        scene.add(rootBone);
+
+        const newTracks = [...get().tracks];
+        ['position', 'rotation', 'scale'].forEach((prop) => {
+          if (!newTracks.some((t) => t.boneName === rootBone.name && t.property === prop)) {
+            newTracks.push({
+              boneName: rootBone.name,
+              property: prop as 'position' | 'rotation' | 'scale',
+              keyframes: {},
+            });
+          }
+        });
+
+        const buildHierarchy = (object: THREE.Object3D): BoneNode[] => {
+          const rootBones: THREE.Bone[] = [];
+          const getDescendantBones = (o: THREE.Object3D): THREE.Bone[] => {
+            const descendants: THREE.Bone[] = [];
+            o.children.forEach((c: any) => {
+              if (c.isBone || c instanceof THREE.Bone) {
+                descendants.push(c);
+              } else {
+                descendants.push(...getDescendantBones(c));
+              }
+            });
+            return descendants;
+          };
+
+          object.traverse((child: any) => {
+            if (child.isBone || child instanceof THREE.Bone) {
+              let isRoot = true;
+              let parent = child.parent;
+              while (parent) {
+                if (parent.isBone || parent instanceof THREE.Bone) {
+                  isRoot = false;
+                  break;
+                }
+                parent = parent.parent;
+              }
+              if (isRoot && !rootBones.includes(child)) rootBones.push(child);
+            }
+          });
+
+          const buildNode = (bone: THREE.Bone): BoneNode => ({
+            id: bone.name || bone.uuid,
+            name: bone.name || 'Unnamed Bone',
+            children: getDescendantBones(bone).map(buildNode),
+          });
+
+          return rootBones.map(buildNode);
+        };
+
+        const updatedHierarchy = buildHierarchy(scene);
+        set((state) => ({
+          activeSkeleton: updatedHierarchy,
+          tracks: newTracks,
+          selectedBoneId: rootBone.name,
+          animationTargetId: targetObjId,
+          animationVersion: state.animationVersion + 1,
+          sceneVersion: state.sceneVersion + 1,
+        }));
+
+        toast.success('Bone Created', `Added root bone "${rootBone.name}" to ${obj.name}`);
+      },
+
+      generateBasicRig: (targetObjId) => {
+        let scene = get().activeClonedScene;
+        const obj = get().objects.find((o) => o.id === targetObjId);
+        if (!obj) {
+          toast.error('Rigging Error', 'Target object not found');
+          return;
+        }
+
+        if (!scene) {
+          scene = new THREE.Group();
+          scene.name = 'rigged_group';
+          set({ activeClonedScene: scene });
+        }
+
+        const rootBone = new THREE.Bone();
+        rootBone.name = 'Root';
+        rootBone.position.set(0, 0, 0);
+
+        const spineBone = new THREE.Bone();
+        spineBone.name = 'Spine';
+        spineBone.position.set(0, 0.4, 0);
+        rootBone.add(spineBone);
+
+        const chestBone = new THREE.Bone();
+        chestBone.name = 'Chest';
+        chestBone.position.set(0, 0.4, 0);
+        spineBone.add(chestBone);
+
+        const headBone = new THREE.Bone();
+        headBone.name = 'Head';
+        headBone.position.set(0, 0.4, 0);
+        chestBone.add(headBone);
+
+        const leftArm = new THREE.Bone();
+        leftArm.name = 'Arm_L';
+        leftArm.position.set(-0.3, 0.2, 0);
+        chestBone.add(leftArm);
+
+        const rightArm = new THREE.Bone();
+        rightArm.name = 'Arm_R';
+        rightArm.position.set(0.3, 0.2, 0);
+        chestBone.add(rightArm);
+
+        const leftLeg = new THREE.Bone();
+        leftLeg.name = 'Leg_L';
+        leftLeg.position.set(-0.2, -0.3, 0);
+        rootBone.add(leftLeg);
+
+        const rightLeg = new THREE.Bone();
+        rightLeg.name = 'Leg_R';
+        rightLeg.position.set(0.2, -0.3, 0);
+        rootBone.add(rightLeg);
+
+        scene.add(rootBone);
+
+        const allBones = [rootBone, spineBone, chestBone, headBone, leftArm, rightArm, leftLeg, rightLeg];
+        const newTracks = [...get().tracks];
+
+        allBones.forEach((bone) => {
+          ['position', 'rotation', 'scale'].forEach((prop) => {
+            if (!newTracks.some((t) => t.boneName === bone.name && t.property === prop)) {
+              newTracks.push({
+                boneName: bone.name,
+                property: prop as 'position' | 'rotation' | 'scale',
+                keyframes: {},
+              });
+            }
+          });
+        });
+
+        const buildHierarchy = (object: THREE.Object3D): BoneNode[] => {
+          const rootBones: THREE.Bone[] = [];
+          const getDescendantBones = (o: THREE.Object3D): THREE.Bone[] => {
+            const descendants: THREE.Bone[] = [];
+            o.children.forEach((c: any) => {
+              if (c.isBone || c instanceof THREE.Bone) {
+                descendants.push(c);
+              } else {
+                descendants.push(...getDescendantBones(c));
+              }
+            });
+            return descendants;
+          };
+
+          object.traverse((child: any) => {
+            if (child.isBone || child instanceof THREE.Bone) {
+              let isRoot = true;
+              let parent = child.parent;
+              while (parent) {
+                if (parent.isBone || parent instanceof THREE.Bone) {
+                  isRoot = false;
+                  break;
+                }
+                parent = parent.parent;
+              }
+              if (isRoot && !rootBones.includes(child)) rootBones.push(child);
+            }
+          });
+
+          const buildNode = (bone: THREE.Bone): BoneNode => ({
+            id: bone.name || bone.uuid,
+            name: bone.name || 'Unnamed Bone',
+            children: getDescendantBones(bone).map(buildNode),
+          });
+
+          return rootBones.map(buildNode);
+        };
+
+        const updatedHierarchy = buildHierarchy(scene);
+        set((state) => ({
+          activeSkeleton: updatedHierarchy,
+          tracks: newTracks,
+          selectedBoneId: 'Root',
+          animationTargetId: targetObjId,
+          animationVersion: state.animationVersion + 1,
+          sceneVersion: state.sceneVersion + 1,
+        }));
+
+        toast.success('Rig Generated', `Generated basic skeleton for ${obj.name}`);
+      },
+
       addBoneToRig: (parentBoneName, newBoneName) => {
         const scene = get().activeClonedScene;
         if (!scene) return;
@@ -3486,48 +3818,47 @@ export const useStore = create<EngineState>()(
         console.log(`[deleteBoneFromRig] Removed bone "${boneName}"`);
       },
 
-      generateFacialRig: (targetObjId) => {
-        const scene = get().activeClonedScene;
-        if (!scene) return;
-
+      generateFacialRig: (targetObjId, customOffsets) => {
         const targetObj = get().objects.find((o) => o.id === targetObjId);
         if (!targetObj) return;
-        if (targetObj.hasFacialRig) {
-          console.warn('[generateFacialRig] Facial rig already exists');
-          return;
-        }
 
-        // Auto-detect head bone
+        const scene = get().activeClonedScene;
+        const objId = targetObjId;
+
+        // Auto-detect head bone if rigged scene exists
         let headBone: any = null;
-        scene.traverse((child: any) => {
-          if ((child.isBone || child instanceof THREE.Bone) && child.name.toLowerCase().includes('head')) {
-            if (!headBone) headBone = child;
-          }
-        });
-
-        if (!headBone) {
-          console.warn('[generateFacialRig] No head bone found in skeleton');
-          return;
+        if (scene) {
+          scene.traverse((child: any) => {
+            if ((child.isBone || child instanceof THREE.Bone) && child.name.toLowerCase().includes('head')) {
+              if (!headBone) headBone = child;
+            }
+          });
         }
+
+        // Reference eye positions if placed
+        const eyeL = customOffsets?.['eye_left'];
+        const eyeR = customOffsets?.['eye_right'];
+        const refY = eyeL ? eyeL[1] : 0.04;
+        const refZ = eyeL ? eyeL[2] : 0.08;
+        const refSpan = eyeL && eyeR ? Math.abs(eyeR[0] - eyeL[0]) : 0.06;
 
         const facialBones: Array<{ name: string; offset: [number, number, number] }> = [
-          { name: 'Face_BrowLeft',        offset: [-0.04,  0.06,  0.08] },
-          { name: 'Face_BrowRight',       offset: [ 0.04,  0.06,  0.08] },
-          { name: 'Face_EyeLeft',         offset: [-0.03,  0.04,  0.08] },
-          { name: 'Face_EyeRight',        offset: [ 0.03,  0.04,  0.08] },
-          { name: 'Face_CheekLeft',       offset: [-0.05,  0.01,  0.07] },
-          { name: 'Face_CheekRight',      offset: [ 0.05,  0.01,  0.07] },
-          { name: 'Face_NoseBridge',      offset: [ 0.0,   0.03,  0.09] },
-          { name: 'Face_Jaw',            offset: [ 0.0,  -0.04,  0.06] },
-          { name: 'Face_LipUpper',        offset: [ 0.0,  -0.01,  0.09] },
-          { name: 'Face_LipLower',        offset: [ 0.0,  -0.03,  0.09] },
-          { name: 'Face_LipCornerLeft',   offset: [-0.03, -0.02,  0.085] },
-          { name: 'Face_LipCornerRight',  offset: [ 0.03, -0.02,  0.085] },
-          { name: 'Face_Chin',           offset: [ 0.0,  -0.06,  0.07] },
+          { name: 'Face_BrowLeft',        offset: customOffsets?.['brow_left'] || [-refSpan * 0.6, refY + refSpan * 0.3, refZ] },
+          { name: 'Face_BrowRight',       offset: customOffsets?.['brow_right'] || [ refSpan * 0.6, refY + refSpan * 0.3, refZ] },
+          { name: 'Face_EyeLeft',         offset: customOffsets?.['eye_left'] || [-refSpan * 0.5, refY, refZ] },
+          { name: 'Face_EyeRight',        offset: customOffsets?.['eye_right'] || [ refSpan * 0.5, refY, refZ] },
+          { name: 'Face_CheekLeft',       offset: customOffsets?.['cheek_left'] || [-refSpan * 0.8, refY - refSpan * 0.5, refZ - refSpan * 0.1] },
+          { name: 'Face_CheekRight',      offset: customOffsets?.['cheek_right'] || [ refSpan * 0.8, refY - refSpan * 0.5, refZ - refSpan * 0.1] },
+          { name: 'Face_NoseBridge',      offset: customOffsets?.['nose_tip'] || [ 0.0, refY - refSpan * 0.25, refZ + refSpan * 0.1] },
+          { name: 'Face_Jaw',            offset: customOffsets?.['chin_jaw'] || [ 0.0, refY - refSpan * 1.2, refZ - refSpan * 0.2] },
+          { name: 'Face_LipUpper',        offset: customOffsets?.['lip_upper'] || [ 0.0, refY - refSpan * 0.6, refZ] },
+          { name: 'Face_LipLower',        offset: customOffsets?.['lip_lower'] || [ 0.0, refY - refSpan * 0.8, refZ] },
+          { name: 'Face_LipCornerLeft',   offset: customOffsets?.['lip_corner_left'] || [-refSpan * 0.4, refY - refSpan * 0.7, refZ] },
+          { name: 'Face_LipCornerRight',  offset: customOffsets?.['lip_corner_right'] || [ refSpan * 0.4, refY - refSpan * 0.7, refZ] },
+          { name: 'Face_Chin',           offset: customOffsets?.['chin_jaw'] || [ 0.0, refY - refSpan * 1.4, refZ] },
         ];
 
         const newTracks = [...get().tracks];
-        const objId = get().animationTargetId;
         const currentDefaultRestPoses = get().defaultRestPoses;
         const updatedDefaultRestPoses = { ...currentDefaultRestPoses };
         if (objId && !updatedDefaultRestPoses[objId]) {
@@ -3537,70 +3868,94 @@ export const useStore = create<EngineState>()(
         }
 
         let createdCount = 0;
-        for (const def of facialBones) {
-          // Skip if already exists
-          let exists = false;
-          scene.traverse((child: any) => {
-            if ((child.isBone || child instanceof THREE.Bone) && child.name === def.name) {
-              exists = true;
-            }
-          });
-          if (exists) continue;
 
-          const boneObj = new THREE.Bone();
-          boneObj.name = def.name;
-          boneObj.position.fromArray(def.offset);
-          headBone.add(boneObj);
-
-          // Bind into SkinnedMesh skeletons
-          scene.traverse((child: any) => {
-            if (child.isSkinnedMesh && child.skeleton) {
-              const skeleton = child.skeleton;
-              if (skeleton.bones.includes(headBone) && !skeleton.bones.includes(boneObj)) {
-                const newBones = [...skeleton.bones, boneObj];
-                const parentIdx = skeleton.bones.indexOf(headBone);
-                const parentInverse = skeleton.boneInverses[parentIdx];
-                boneObj.updateMatrix();
-                const newInverse = new THREE.Matrix4()
-                  .copy(boneObj.matrix)
-                  .invert()
-                  .multiply(parentInverse);
-                const newInverses = [...skeleton.boneInverses, newInverse];
-                const newSkeleton = new THREE.Skeleton(newBones, newInverses);
-                child.bind(newSkeleton, child.bindMatrix);
+        if (scene && headBone) {
+          for (const def of facialBones) {
+            let boneObj: THREE.Bone | null = null;
+            scene.traverse((child: any) => {
+              if ((child.isBone || child instanceof THREE.Bone) && child.name === def.name) {
+                boneObj = child;
               }
-            }
-          });
+            });
 
-          // Add empty tracks
-          ['position', 'rotation', 'scale'].forEach((prop) => {
-            const hasTrack = newTracks.some(t => t.boneName === def.name && t.property === prop);
-            if (!hasTrack) {
-              newTracks.push({
-                boneName: def.name,
-                property: prop as 'position' | 'rotation' | 'scale',
-                keyframes: {},
+            if (!boneObj) {
+              boneObj = new THREE.Bone();
+              boneObj.name = def.name;
+              headBone.add(boneObj);
+
+              // Bind into SkinnedMesh skeletons
+              scene.traverse((child: any) => {
+                if (child.isSkinnedMesh && child.skeleton) {
+                  const skeleton = child.skeleton;
+                  if (skeleton.bones.includes(headBone) && !skeleton.bones.includes(boneObj)) {
+                    const newBones = [...skeleton.bones, boneObj];
+                    const parentIdx = skeleton.bones.indexOf(headBone);
+                    const parentInverse = skeleton.boneInverses[parentIdx];
+                    boneObj!.updateMatrix();
+                    const newInverse = new THREE.Matrix4()
+                      .copy(boneObj!.matrix)
+                      .invert()
+                      .multiply(parentInverse);
+                    const newInverses = [...skeleton.boneInverses, newInverse];
+                    const newSkeleton = new THREE.Skeleton(newBones, newInverses);
+                    child.bind(newSkeleton, child.bindMatrix);
+                  }
+                }
               });
             }
-          });
 
-          // Register default rest pose
-          if (objId && updatedDefaultRestPoses[objId]) {
-            updatedDefaultRestPoses[objId][def.name] = {
-              position: [boneObj.position.x, boneObj.position.y, boneObj.position.z] as [number, number, number],
-              rotation: [boneObj.quaternion.x, boneObj.quaternion.y, boneObj.quaternion.z, boneObj.quaternion.w] as [number, number, number, number],
-              scale: [boneObj.scale.x, boneObj.scale.y, boneObj.scale.z] as [number, number, number],
-            };
+            boneObj.position.fromArray(def.offset);
+
+            // Add timeline animation tracks for this facial bone
+            ['position', 'rotation', 'scale'].forEach((prop) => {
+              const hasTrack = newTracks.some((t) => t.boneName === def.name && t.property === prop);
+              if (!hasTrack) {
+                newTracks.push({
+                  boneName: def.name,
+                  property: prop as 'position' | 'rotation' | 'scale',
+                  keyframes: prop === 'position' ? { 0: [...def.offset] } : {},
+                });
+              }
+            });
+
+            // Register default rest pose
+            if (objId && updatedDefaultRestPoses[objId]) {
+              updatedDefaultRestPoses[objId][def.name] = {
+                position: [boneObj.position.x, boneObj.position.y, boneObj.position.z] as [number, number, number],
+                rotation: [boneObj.quaternion.x, boneObj.quaternion.y, boneObj.quaternion.z, boneObj.quaternion.w] as [number, number, number, number],
+                scale: [boneObj.scale.x, boneObj.scale.y, boneObj.scale.z] as [number, number, number],
+              };
+            }
+
+            createdCount++;
           }
+        } else {
+          // Clean up any previously created marker objects from objects array
+          const markerIdsToDelete = get().objects
+            .filter((o) => o.parentId === targetObjId && o.userData?.isFacialMarker)
+            .map((o) => o.id);
+          markerIdsToDelete.forEach((id) => get().deleteObject(id));
 
-          createdCount++;
+          // Create animation timeline tracks for each facial landmark
+          for (const def of facialBones) {
+            ['position', 'rotation', 'scale'].forEach((prop) => {
+              const hasTrack = newTracks.some((t) => t.boneName === def.name && t.property === prop);
+              if (!hasTrack) {
+                newTracks.push({
+                  boneName: def.name,
+                  property: prop as 'position' | 'rotation' | 'scale',
+                  keyframes: prop === 'position' ? { 0: [...def.offset] } : {},
+                });
+              }
+            });
+
+            createdCount++;
+          }
         }
 
-        if (createdCount === 0) return;
-
-        // Rebuild hierarchy
-        const buildHierarchy = (object: THREE.Object3D) => {
-          const rootBones: THREE.Bone[] = [];
+        // Rebuild hierarchy if scene exists
+        let newActiveSkeleton = get().activeSkeleton;
+        if (scene) {
           const getDescendantBones = (obj: THREE.Object3D): THREE.Bone[] => {
             const descendants: THREE.Bone[] = [];
             obj.children.forEach((c: any) => {
@@ -3613,7 +3968,8 @@ export const useStore = create<EngineState>()(
             return descendants;
           };
 
-          object.traverse((child: any) => {
+          const rootBones: THREE.Bone[] = [];
+          scene.traverse((child: any) => {
             if (child.isBone || child instanceof THREE.Bone) {
               let isRoot = true;
               let parent = child.parent;
@@ -3634,8 +3990,8 @@ export const useStore = create<EngineState>()(
             children: getDescendantBones(bone).map(buildNode),
           });
 
-          return rootBones.map(buildNode);
-        };
+          newActiveSkeleton = rootBones.map(buildNode);
+        }
 
         const obj = objId ? get().objects.find((o) => o.id === objId) : null;
         const clipName = obj?.activeAnimation || null;
@@ -3643,18 +3999,22 @@ export const useStore = create<EngineState>()(
 
         const newObjects = saveTracksToObjects(get(), newTracks);
 
-        // Mark the target object as having a facial rig
-        get().updateObject(targetObjId, { hasFacialRig: true });
+        // Mark target object as having facial rig & save landmarks
+        get().updateObject(targetObjId, {
+          hasFacialRig: true,
+          userData: { ...(targetObj.userData || {}), facialLandmarks: customOffsets },
+        });
 
         set((state) => ({
-          activeSkeleton: buildHierarchy(scene),
+          activeSkeleton: newActiveSkeleton,
           sceneVersion: state.sceneVersion + 1,
+          animationTargetId: targetObjId,
           tracks: newTracks,
           animationVersion: state.animationVersion + 1,
           defaultRestPoses: updatedDefaultRestPoses,
           ...syncSceneObjects(state, newObjects),
         }));
-        console.log(`[generateFacialRig] Generated ${createdCount} facial rig bones on head bone "${headBone.name}"`);
+        console.log(`[generateFacialRig] Generated/Updated ${createdCount} facial rig bones & tracks on target ${targetObjId}`);
       },
 
       removeFacialRig: (targetObjId) => {
@@ -3978,6 +4338,348 @@ export const useStore = create<EngineState>()(
         }));
 
         toast.success('AI Alignment Succeeded', `Projected ${alignedCount} facial bones to character front mesh coordinates.`);
+      },
+
+      generateEyeRig: (targetObjId, customPositions) => {
+        const targetObj = get().objects.find((o) => o.id === targetObjId);
+        if (!targetObj) return;
+
+        const scene = get().activeClonedScene;
+        let leftEyeLocal = new THREE.Vector3();
+        let rightEyeLocal = new THREE.Vector3();
+        let defaultScale = 0.035;
+        let headBoneName: string | undefined = undefined;
+
+        if (customPositions?.left && customPositions?.right) {
+          leftEyeLocal.fromArray(customPositions.left);
+          rightEyeLocal.fromArray(customPositions.right);
+          defaultScale = Math.min(0.25, Math.max(0.02, leftEyeLocal.distanceTo(rightEyeLocal) * 0.35));
+        } else if (targetObj.userData?.facialLandmarks?.['eye_left'] && targetObj.userData?.facialLandmarks?.['eye_right']) {
+          leftEyeLocal.fromArray(targetObj.userData.facialLandmarks['eye_left']);
+          rightEyeLocal.fromArray(targetObj.userData.facialLandmarks['eye_right']);
+          defaultScale = Math.min(0.25, Math.max(0.02, leftEyeLocal.distanceTo(rightEyeLocal) * 0.35));
+        } else if (scene) {
+          const eyeCenters = calculateEyeCenters(scene);
+          if (eyeCenters) {
+            leftEyeLocal.copy(eyeCenters.leftEyeLocal);
+            rightEyeLocal.copy(eyeCenters.rightEyeLocal);
+            defaultScale = eyeCenters.eyeScale || 0.035;
+            headBoneName = eyeCenters.headBone?.name;
+
+            // Apply socket vertex recession (inset) to character mesh in scene
+            scene.traverse((child: any) => {
+              if (child.isMesh && child.geometry && !child.userData?.isEyeSphere) {
+                applyEyeSocketInset(child, eyeCenters.leftEyeWorld, eyeCenters.rightEyeWorld, 0.035, 0.045);
+              }
+            });
+          }
+        }
+
+        // Fallback for unrigged meshes, cubes, or when eye centers were not derived from bones
+        if (!leftEyeLocal.lengthSq() && !rightEyeLocal.lengthSq()) {
+          // Position eyes on the front face of the mesh (+Z) in local coordinates
+          leftEyeLocal.set(-0.25, 0.15, 0.5);
+          rightEyeLocal.set(0.25, 0.15, 0.5);
+          defaultScale = 0.18;
+        }
+
+        const leftId = `${targetObjId}_eye_3d_left`;
+        const rightId = `${targetObjId}_eye_3d_right`;
+
+        // Remove existing eye objects if any
+        if (get().objects.some((o) => o.id === leftId)) {
+          get().deleteObject(leftId);
+        }
+        if (get().objects.some((o) => o.id === rightId)) {
+          get().deleteObject(rightId);
+        }
+
+        // Add 3D Eyeball Left
+        get().addObject({
+          id: leftId,
+          name: `${targetObj.name} 3D Eye (L)`,
+          type: 'mesh',
+          geometry: 'sphere',
+          parentId: targetObj.id,
+          attachedBoneName: headBoneName,
+          position: [leftEyeLocal.x, leftEyeLocal.y, leftEyeLocal.z],
+          rotation: [0, 0, 0],
+          scale: [defaultScale, defaultScale, defaultScale],
+          material: {
+            color: '#ffffff',
+            roughness: 0.05,
+            metalness: 0.0,
+            envMapIntensity: 1.5,
+          },
+          userData: { isEyeSphere: true, eyeSide: 'left', baseZ: leftEyeLocal.z },
+        });
+
+        // Add 3D Eyeball Right
+        get().addObject({
+          id: rightId,
+          name: `${targetObj.name} 3D Eye (R)`,
+          type: 'mesh',
+          geometry: 'sphere',
+          parentId: targetObj.id,
+          attachedBoneName: headBoneName,
+          position: [rightEyeLocal.x, rightEyeLocal.y, rightEyeLocal.z],
+          rotation: [0, 0, 0],
+          scale: [defaultScale, defaultScale, defaultScale],
+          material: {
+            color: '#ffffff',
+            roughness: 0.05,
+            metalness: 0.0,
+            envMapIntensity: 1.5,
+          },
+          userData: { isEyeSphere: true, eyeSide: 'right', baseZ: rightEyeLocal.z },
+        });
+
+        // Update target object props
+        get().updateObject(targetObjId, {
+          eyeRigProps: {
+            enabled: true,
+            leftEyeObjId: leftId,
+            rightEyeObjId: rightId,
+            socketDepth: 0.035,
+            socketRadius: 0.045,
+            eyeScale: defaultScale,
+            irisColor: '#2563eb',
+            pupilSize: 0.35,
+            roughness: 0.05,
+            lookAtMode: 'manual',
+            lookYaw: 0,
+            lookPitch: 0,
+            blinkLeft: 0,
+            blinkRight: 0,
+            autoBlink: true,
+            autoBlinkDuration: 0.14,
+            autoBlinkIntervalMin: 3.0,
+            autoBlinkIntervalMax: 5.0,
+          },
+        });
+
+        toast.success('3D Eyes & Sockets Generated', 'Recessed sockets & high-gloss 3D eye spheres attached to target.');
+      },
+
+      removeEyeRig: (targetObjId) => {
+        const targetObj = get().objects.find((o) => o.id === targetObjId);
+        if (!targetObj || !targetObj.eyeRigProps) return;
+
+        const leftId = targetObj.eyeRigProps.leftEyeObjId || `${targetObjId}_eye_3d_left`;
+        const rightId = targetObj.eyeRigProps.rightEyeObjId || `${targetObjId}_eye_3d_right`;
+
+        get().deleteObject(leftId);
+        get().deleteObject(rightId);
+
+        const scene = get().activeClonedScene;
+        if (scene) {
+          scene.traverse((child: any) => {
+            if (child.isMesh && child.geometry && child.userData?.originalPreSocketPositions) {
+              restoreOriginalEyeSocketMesh(child);
+            }
+          });
+        }
+
+        get().updateObject(targetObjId, { eyeRigProps: undefined });
+        toast.info('3D Eye Rig Removed', 'Restored original face mesh geometry.');
+      },
+
+      updateEyeRigProps: (targetObjId, updates) => {
+        const targetObj = get().objects.find((o) => o.id === targetObjId);
+        if (!targetObj || !targetObj.eyeRigProps) return;
+
+        const updatedProps = { ...targetObj.eyeRigProps, ...updates };
+
+        // Handle socket depth: dynamically sink eyeball spheres into head / face along Z
+        if (updates.socketDepth !== undefined) {
+          const depth = updates.socketDepth;
+          const leftObj = updatedProps.leftEyeObjId ? get().objects.find((o) => o.id === updatedProps.leftEyeObjId) : null;
+          const rightObj = updatedProps.rightEyeObjId ? get().objects.find((o) => o.id === updatedProps.rightEyeObjId) : null;
+
+          if (leftObj) {
+            const baseZ = leftObj.userData?.baseZ ?? leftObj.position[2];
+            get().updateObject(leftObj.id, {
+              userData: { ...leftObj.userData, baseZ },
+              position: [leftObj.position[0], leftObj.position[1], baseZ - depth],
+            });
+          }
+
+          if (rightObj) {
+            const baseZ = rightObj.userData?.baseZ ?? rightObj.position[2];
+            get().updateObject(rightObj.id, {
+              userData: { ...rightObj.userData, baseZ },
+              position: [rightObj.position[0], rightObj.position[1], baseZ - depth],
+            });
+          }
+        }
+
+        // Handle mesh vertex socket deformation on character mesh
+        if (updates.socketDepth !== undefined || updates.socketRadius !== undefined) {
+          const scene = get().activeClonedScene;
+          if (scene) {
+            const eyeCenters = calculateEyeCenters(scene);
+            if (eyeCenters) {
+              scene.traverse((child: any) => {
+                if (child.isMesh && child.geometry && !child.userData?.isEyeSphere) {
+                  applyEyeSocketInset(
+                    child,
+                    eyeCenters.leftEyeWorld,
+                    eyeCenters.rightEyeWorld,
+                    updatedProps.socketDepth,
+                    updatedProps.socketRadius
+                  );
+                }
+              });
+            }
+          }
+        }
+
+        // Handle eyeScale update
+        if (updates.eyeScale !== undefined) {
+          const s = updates.eyeScale;
+          if (updatedProps.leftEyeObjId) {
+            get().updateObject(updatedProps.leftEyeObjId, { scale: [s, s, s] });
+          }
+          if (updatedProps.rightEyeObjId) {
+            get().updateObject(updatedProps.rightEyeObjId, { scale: [s, s, s] });
+          }
+        }
+
+        // Handle manual look yaw/pitch
+        if (updates.lookYaw !== undefined || updates.lookPitch !== undefined) {
+          const yawRad = THREE.MathUtils.degToRad(updatedProps.lookYaw || 0);
+          const pitchRad = THREE.MathUtils.degToRad(updatedProps.lookPitch || 0);
+          const euler = [pitchRad, yawRad, 0] as [number, number, number];
+
+          if (updatedProps.leftEyeObjId) {
+            get().updateObject(updatedProps.leftEyeObjId, { rotation: euler });
+          }
+          if (updatedProps.rightEyeObjId) {
+            get().updateObject(updatedProps.rightEyeObjId, { rotation: euler });
+          }
+        }
+
+        get().updateObject(targetObjId, { eyeRigProps: updatedProps });
+      },
+
+      facialWizardState: {
+        active: false,
+        currentStepIndex: 0,
+        placedLandmarks: {},
+        symmetryMode: true,
+        targetObjectId: null,
+      },
+
+      startFacialRigWizard: (targetObjId) => {
+        const targetObj = get().objects.find((o) => o.id === targetObjId);
+        if (!targetObj) return;
+
+        set({
+          transformMode: 'select',
+          facialWizardState: {
+            active: true,
+            currentStepIndex: 0,
+            placedLandmarks: {},
+            symmetryMode: true,
+            targetObjectId: targetObjId,
+          },
+        });
+
+        // Focus camera on face
+        window.dispatchEvent(new CustomEvent('snap_camera', { detail: { view: 'front' } }));
+        toast.info('Facial Setup Wizard Active', 'Click on the highlighted landmarks directly on the 3D model.');
+      },
+
+      setFacialWizardLandmark: (landmarkKey, localPos) => {
+        set((state) => ({
+          facialWizardState: {
+            ...state.facialWizardState,
+            placedLandmarks: {
+              ...state.facialWizardState.placedLandmarks,
+              [landmarkKey]: localPos,
+            },
+          },
+        }));
+
+        // Automatically advance to next landmark step
+        const currentIndex = get().facialWizardState.currentStepIndex;
+        if (currentIndex < FACIAL_LANDMARKS.length - 1) {
+          get().nextFacialWizardStep();
+        }
+      },
+
+      nextFacialWizardStep: () => {
+        set((state) => ({
+          facialWizardState: {
+            ...state.facialWizardState,
+            currentStepIndex: Math.min(FACIAL_LANDMARKS.length - 1, state.facialWizardState.currentStepIndex + 1),
+          },
+        }));
+      },
+
+      prevFacialWizardStep: () => {
+        set((state) => ({
+          facialWizardState: {
+            ...state.facialWizardState,
+            currentStepIndex: Math.max(0, state.facialWizardState.currentStepIndex - 1),
+          },
+        }));
+      },
+
+      skipFacialWizardStep: () => {
+        get().nextFacialWizardStep();
+      },
+
+      cancelFacialRigWizard: () => {
+        set({
+          facialWizardState: {
+            active: false,
+            currentStepIndex: 0,
+            placedLandmarks: {},
+            symmetryMode: true,
+            targetObjectId: null,
+          },
+        });
+        toast.info('Facial Setup Wizard Cancelled');
+      },
+
+      toggleFacialWizardSymmetry: () => {
+        set((state) => ({
+          facialWizardState: {
+            ...state.facialWizardState,
+            symmetryMode: !state.facialWizardState.symmetryMode,
+          },
+        }));
+      },
+
+      finishFacialRigWizard: () => {
+        const { targetObjectId, placedLandmarks } = get().facialWizardState;
+        if (!targetObjectId) return;
+
+        // Build facial rig using custom placed landmarks
+        get().generateFacialRig(targetObjectId, placedLandmarks);
+
+        // If eye landmarks were placed, automatically generate/snap 3D eye spheres
+        if (placedLandmarks['eye_left'] && placedLandmarks['eye_right']) {
+          get().generateEyeRig(targetObjectId, {
+            left: placedLandmarks['eye_left'],
+            right: placedLandmarks['eye_right'],
+          });
+        }
+
+        set({
+          facialWizardState: {
+            active: false,
+            currentStepIndex: 0,
+            placedLandmarks: {},
+            symmetryMode: true,
+            targetObjectId: null,
+          },
+          facialFocusMode: true,
+          workspaceMode: 'animation',
+        });
+
+        toast.success('Facial Rig Calibrated', 'Custom facial landmarks mapped and timeline tracks ready for animation.');
       },
 
       renameBone: (oldName, newName) => {
@@ -4618,21 +5320,16 @@ export const useStore = create<EngineState>()(
 
           const updates: any = { selectedIds, activeFaceTab: 'all' };
 
-          // If in animation mode and selection changes, try to automatically update animationTargetId
-          if (state.workspaceMode === 'animation' && selectedIds.length === 1) {
-            const selectedId = selectedIds[0];
-            const obj = state.objects.find((o) => o.id === selectedId);
-            if (obj) {
-              let curr = obj;
-              const visited = new Set();
-              while (curr && !visited.has(curr.id)) {
-                visited.add(curr.id);
-                if (curr.type === 'gltf' || (curr.type as any) === 'fbx') {
-                  updates.animationTargetId = curr.id;
-                  break;
-                }
-                curr = curr.parentId ? state.objects.find((o) => o.id === curr.parentId) : null;
+          // If in animation mode and selection changes, automatically update animationTargetId
+          if (state.workspaceMode === 'animation') {
+            if (selectedIds.length === 1) {
+              const selectedId = selectedIds[0];
+              const obj = state.objects.find((o) => o.id === selectedId);
+              if (obj) {
+                updates.animationTargetId = obj.id;
               }
+            } else if (selectedIds.length === 0) {
+              updates.animationTargetId = null;
             }
           }
           return updates;
@@ -4656,26 +5353,6 @@ export const useStore = create<EngineState>()(
             newObjects = [...state.objects, defaultObj];
           } else {
             newObjects = state.objects.map((obj) => (obj.id === id ? { ...obj, ...updates } : obj));
-          }
-          const isEyelid = id.endsWith('_eyelid_left') || id.endsWith('_eyelid_right');
-          if (state.eyelidsSymmetry && isEyelid) {
-            const otherId = id.endsWith('_eyelid_left')
-              ? id.replace('_eyelid_left', '_eyelid_right')
-              : id.replace('_eyelid_right', '_eyelid_left');
-            const otherUpdates: any = {};
-            if (updates.position) {
-              otherUpdates.position = [-updates.position[0], updates.position[1], updates.position[2]];
-            }
-            if (updates.rotation) {
-              otherUpdates.rotation = [updates.rotation[0], -updates.rotation[1], -updates.rotation[2]];
-            }
-            if (updates.scale) {
-              otherUpdates.scale = [...updates.scale];
-            }
-            if (updates.material) {
-              otherUpdates.material = { ...updates.material };
-            }
-            newObjects = newObjects.map((obj) => (obj.id === otherId ? { ...obj, ...otherUpdates } : obj));
           }
           return syncSceneObjects(state, newObjects);
         }),
@@ -6675,6 +7352,9 @@ self.traverse((child) => {
           showGrid,
           showOverlays,
           showPhysicsDebug,
+          spatialPartitioningEnabled,
+          spatialStructureType,
+          frustumCullingEnabled,
           showEmitters,
           wireframeMode,
           panelWidth,
@@ -6701,6 +7381,9 @@ self.traverse((child) => {
           showGrid,
           showOverlays,
           showPhysicsDebug,
+          spatialPartitioningEnabled,
+          spatialStructureType,
+          frustumCullingEnabled,
           showEmitters,
           wireframeMode,
           panelWidth,
@@ -7019,14 +7702,14 @@ function updateKeyframeHelper(
   return newTracks;
 }
 
-function getInterpolatedValueForFrame(
-  keyframes: Record<number, any> | Array<{ frame: number; value: any }>,
-  property: 'position' | 'rotation' | 'scale' | 'morph' | 'expression',
-  currentFrame: number
-) {
-  if (!keyframes) return null;
+const interpolatedFramesCache = new WeakMap<object, { frameMap: Record<number, any>; frames: number[] }>();
 
-  // Normalize keyframe map: frameNumber -> value
+function getNormalizedKeyframeData(keyframes: Record<number, any> | Array<{ frame: number; value: any }>) {
+  if (!keyframes || typeof keyframes !== 'object') return null;
+
+  let cached = interpolatedFramesCache.get(keyframes);
+  if (cached) return cached;
+
   const frameMap: Record<number, any> = {};
   if (Array.isArray(keyframes)) {
     if (keyframes.length === 0) return null;
@@ -7035,18 +7718,31 @@ function getInterpolatedValueForFrame(
         frameMap[k.frame] = k.value;
       }
     }
-  } else if (typeof keyframes === 'object') {
-    if (Object.keys(keyframes).length === 0) return null;
-    Object.assign(frameMap, keyframes);
   } else {
-    return null;
+    Object.assign(frameMap, keyframes);
   }
 
   const frames = Object.keys(frameMap)
     .map(Number)
+    .filter((f) => !isNaN(f))
     .sort((a, b) => a - b);
 
   if (frames.length === 0) return null;
+
+  cached = { frameMap, frames };
+  interpolatedFramesCache.set(keyframes, cached);
+  return cached;
+}
+
+function getInterpolatedValueForFrame(
+  keyframes: Record<number, any> | Array<{ frame: number; value: any }>,
+  property: 'position' | 'rotation' | 'scale' | 'morph' | 'expression',
+  currentFrame: number
+) {
+  const norm = getNormalizedKeyframeData(keyframes);
+  if (!norm) return null;
+
+  const { frameMap, frames } = norm;
 
   // Find prevFrame and nextFrame
   let prevFrame = frames[0];

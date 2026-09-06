@@ -2697,7 +2697,7 @@ export default function InspectorPanel() {
                   className="bg-bg-deep border border-border text-text-primary px-2 py-1.5 rounded-md w-full font-mono text-[11px] focus:border-accent focus:ring-1 focus:ring-accent focus:outline-none transition-all disabled:opacity-50"
                   value={selectedObj.behavior || 'none'}
                   onChange={(e) =>
-                    updateObject(selectedObj.id, { behavior: e.target.value as 'none' | 'spin' | 'float' | 'follow' | 'buoyancy' })
+                    updateObject(selectedObj.id, { behavior: e.target.value as any })
                   }
                   disabled={isPlaying}
                 >
@@ -2706,8 +2706,61 @@ export default function InspectorPanel() {
                   <option value="float">Hover & Bob</option>
                   <option value="buoyancy">Buoyant Float</option>
                   <option value="follow">Follow Camera</option>
+                  <option value="patrol">Patrol Loop</option>
+                  <option value="wander">Wander Area</option>
                 </select>
               </div>
+
+              <div className="grid grid-cols-[80px_1fr] items-center gap-2 pt-2 border-t border-border/40">
+                <span className="text-[11px] text-text-secondary">Terrain Follow</span>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                    checked={selectedObj.terrainFollowing ?? (selectedObj.behavior === 'follow' || selectedObj.behavior === 'patrol' || selectedObj.behavior === 'wander')}
+                    onChange={(e) => updateObject(selectedObj.id, { terrainFollowing: e.target.checked })}
+                    disabled={isPlaying}
+                  />
+                  <span className="text-[11px] text-text-secondary">Snap & follow terrain Y</span>
+                </label>
+              </div>
+
+              {(selectedObj.terrainFollowing || selectedObj.behavior === 'follow' || selectedObj.behavior === 'patrol' || selectedObj.behavior === 'wander') && (
+                <>
+                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Y Offset</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="range"
+                        min="-2.0"
+                        max="10.0"
+                        step="0.1"
+                        className="w-full accent-purple-400"
+                        value={selectedObj.terrainOffset ?? 0}
+                        onChange={(e) => updateObject(selectedObj.id, { terrainOffset: parseFloat(e.target.value) })}
+                        disabled={isPlaying}
+                      />
+                      <span className="w-10 font-mono text-[10px] text-text-primary text-right bg-bg-deep px-1 py-0.5 rounded border border-border">
+                        {(selectedObj.terrainOffset ?? 0).toFixed(1)}m
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-[80px_1fr] items-center gap-2">
+                    <span className="text-[11px] text-text-secondary">Align Slope</span>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="rounded border-border text-accent focus:ring-accent bg-bg-deep w-3.5 h-3.5"
+                        checked={selectedObj.terrainAlignNormal ?? false}
+                        onChange={(e) => updateObject(selectedObj.id, { terrainAlignNormal: e.target.checked })}
+                        disabled={isPlaying}
+                      />
+                      <span className="text-[11px] text-text-secondary">Tilt with hill normals</span>
+                    </label>
+                  </div>
+                </>
+              )}
             </div>
           </Section>
         )}

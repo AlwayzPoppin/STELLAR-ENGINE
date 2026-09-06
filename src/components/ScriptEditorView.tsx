@@ -281,6 +281,7 @@ export default function ScriptEditorView({ assetId }: Props) {
 
   const editorRef = useRef<any>(null);
   const providerRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const syncTimeoutRef = useRef<any>(null);
   const lastLoadedAssetIdRef = useRef<string>(assetId);
 
@@ -403,6 +404,31 @@ export default function ScriptEditorView({ assetId }: Props) {
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+
+    // Recalculate Monaco layout on window resize or parent container resizing (timeline / bottom panel drag)
+    const handleResize = () => {
+      editor.layout();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', handleResize);
+    }
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        editor.layout();
+      });
+      resizeObserver.observe(containerRef.current);
+    }
+
+    editor.onDidDispose(() => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', handleResize);
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    });
 
     // Flush to store on blur (loss of focus)
     editor.onDidBlurEditorText(() => {
@@ -529,7 +555,7 @@ export default function ScriptEditorView({ assetId }: Props) {
       </div>
 
       {/* Monaco Code Editor Container */}
-      <div className="flex-1 overflow-hidden relative">
+      <div ref={containerRef} className="flex-1 overflow-hidden relative">
         <Editor
           key={assetId}
           height="100%"

@@ -104,3 +104,48 @@ describe('MultiSelectionGizmo transform math and batch store updates', () => {
     expect(obj2.rotation).toEqual([0, 1.57, 0]);
   });
 });
+
+describe('filterGizmoOccludedIntersections', () => {
+  it('should return all items when isGizmoFocused is false', async () => {
+    const { filterGizmoOccludedIntersections } = await import('./Viewport');
+    const mockItems: any[] = [
+      { distance: 5, object: { name: 'ForegroundMesh' } },
+      { distance: 10, object: { name: 'GizmoHandle', isTransformControls: true } },
+      { distance: 15, object: { name: 'BackgroundMesh' } },
+    ];
+
+    const result = filterGizmoOccludedIntersections(mockItems, false);
+    expect(result.length).toBe(3);
+  }, 15000);
+
+  it('should preserve foreground objects in front of gizmo and drop occluded background objects', async () => {
+    const { filterGizmoOccludedIntersections } = await import('./Viewport');
+    const mockItems: any[] = [
+      { distance: 4, object: { name: 'ForegroundMesh' } },
+      { distance: 10, object: { name: 'TransformControls_X', isTransformControls: true } },
+      { distance: 15, object: { name: 'BackgroundMesh' } },
+    ];
+
+    const result = filterGizmoOccludedIntersections(mockItems, true);
+    expect(result.length).toBe(1);
+    expect(result[0].object.name).toBe('ForegroundMesh');
+  }, 15000);
+
+  it('should estimate gizmo distance from camera to active target when gizmo is not in hit items', async () => {
+    const { filterGizmoOccludedIntersections } = await import('./Viewport');
+    const mockCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    mockCamera.position.set(0, 0, 10);
+
+    const selectedObjects: any[] = [{ position: [0, 0, 0] }]; // Distance from camera (0,0,10) is 10
+
+    const mockItems: any[] = [
+      { distance: 3, object: { name: 'ForegroundMesh' } }, // Closer than 10 -> keep
+      { distance: 12, object: { name: 'BackgroundMesh' } }, // Further than 10 -> drop
+    ];
+
+    const result = filterGizmoOccludedIntersections(mockItems, true, mockCamera, selectedObjects);
+    expect(result.length).toBe(1);
+    expect(result[0].object.name).toBe('ForegroundMesh');
+  }, 15000);
+});
+

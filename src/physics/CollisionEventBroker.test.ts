@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { CollisionEventBroker, CollisionEvent } from './CollisionEventBroker';
 import { SpatialAudioManager } from '../utils/SpatialAudioManager';
+import { useStore } from '../store/useStore';
 import * as THREE from 'three';
 
 describe('CollisionEventBroker', () => {
@@ -193,5 +194,44 @@ describe('CollisionEventBroker', () => {
     expect(CollisionEventBroker.extractObjectId({ colliderObject: { userData: { id: 'test_4' } } })).toBe('test_4');
     expect(CollisionEventBroker.extractObjectId({ name: 'fallback_name' })).toBe('fallback_name');
     expect(CollisionEventBroker.extractObjectId(null)).toBe('');
+  });
+
+  it('should trigger scripted events on intersection enter (trigger volume)', () => {
+    const triggerSpy = vi.spyOn(useStore.getState(), 'triggerScriptedEvents');
+
+    const rapierPayload = {
+      other: {
+        rigidBodyObject: {
+          userData: { id: 'player_1' },
+        },
+      },
+    };
+
+    CollisionEventBroker.handleRapierIntersectionEnter('trigger_zone_1', rapierPayload);
+
+    expect(triggerSpy).toHaveBeenCalledWith('on_enter_trigger', 'trigger_zone_1');
+    expect(triggerSpy).toHaveBeenCalledWith('on_enter_trigger', 'player_1');
+  });
+
+  it('should trigger on_enemy_defeated when a high-impact collision hits an enemy', () => {
+    const triggerSpy = vi.spyOn(useStore.getState(), 'triggerScriptedEvents');
+
+    const enemyObj: any = {
+      id: 'goblin_boss',
+      name: 'Goblin Boss Enemy',
+    };
+
+    const rapierPayload = {
+      other: {
+        rigidBodyObject: {
+          userData: { id: 'boulder_1' },
+        },
+      },
+      totalForceMagnitude: 45,
+    };
+
+    CollisionEventBroker.handleRapierCollisionEnter('goblin_boss', rapierPayload, undefined, enemyObj);
+
+    expect(triggerSpy).toHaveBeenCalledWith('on_enemy_defeated', 'goblin_boss');
   });
 });

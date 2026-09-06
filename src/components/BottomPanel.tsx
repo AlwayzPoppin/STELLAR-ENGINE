@@ -8,6 +8,35 @@ import { toast } from '../store/useToastStore';
 import { AssetCard, AssetPreviewPortal } from './AssetCard';
 import { usePanelResizer } from '../hooks/usePanelResizer';
 
+export async function importFilesBatch(files: File[]): Promise<{ successCount: number; failCount: number; lastSuccessName: string }> {
+  let successCount = 0;
+  let failCount = 0;
+  let lastSuccessName = '';
+
+  for (const file of files) {
+    try {
+      const imported = await processImportedFile(file);
+      successCount++;
+      lastSuccessName = imported.name;
+    } catch (err) {
+      failCount++;
+      console.error(`Failed to import ${file.name}:`, err);
+    }
+  }
+
+  if (successCount === 1) {
+    toast.success(`Imported ${lastSuccessName} into My Assets`);
+  } else if (successCount > 1) {
+    toast.success(`Imported ${successCount} assets into My Assets`);
+  }
+
+  if (failCount > 0) {
+    toast.error(`Failed to import ${failCount} asset${failCount > 1 ? 's' : ''}`);
+  }
+
+  return { successCount, failCount, lastSuccessName };
+}
+
 function BottomPanel(): React.JSX.Element {
   const [activeTab, setActiveTab] = useState('browser');
   const [browserTab, setBrowserTab] = useState<'user' | 'system'>('user');
@@ -166,16 +195,15 @@ function BottomPanel(): React.JSX.Element {
               <input
                 id="asset-upload"
                 type="file"
-                accept=".glb,.gltf,.png,.PNG,.jpg,.JPG,.jpeg,.JPEG,.webp,.WEBP,.js,.ts,.mp3,.wav,.ogg"
+                multiple
+                accept=".glb,.gltf,.png,.PNG,.jpg,.JPG,.jpeg,.JPEG,.webp,.WEBP,.ktx2,.KTX2,.basis,.BASIS,.js,.ts,.mp3,.wav,.ogg"
                 className="hidden"
                 onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  if (file) {
-                    try {
-                      await processImportedFile(file);
-                    } catch (err) {
-                      console.error('Failed to import file:', err);
-                    }
+                  const fileList = e.target.files;
+                  if (fileList && fileList.length > 0) {
+                    setBrowserTab('user');
+                    const files = Array.from(fileList);
+                    await importFilesBatch(files);
                     // Reset the input so the same file can be uploaded again if needed
                     e.target.value = '';
                   }
@@ -245,14 +273,7 @@ function BottomPanel(): React.JSX.Element {
               if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                 setBrowserTab('user');
                 const files = Array.from(e.dataTransfer.files);
-                for (const file of files) {
-                  try {
-                    const imported = await processImportedFile(file);
-                    toast.success(`Imported ${imported.name} into My Assets`);
-                  } catch (err) {
-                    toast.error(`Failed to import ${file.name}`);
-                  }
-                }
+                await importFilesBatch(files);
               }
             }}
             className={`grid grid-cols-[repeat(auto-fill,minmax(96px,1fr))] gap-4 p-5 relative min-h-[140px] ${isPickingAsset ? 'pt-3' : ''}`}

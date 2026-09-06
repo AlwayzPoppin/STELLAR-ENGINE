@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cloud, CloudCheck, Loader2, AlertCircle, Move, RotateCw, Scaling, MousePointer, Layers, Cpu, Boxes } from 'lucide-react';
+import { Cloud, CloudCheck, Loader2, AlertCircle, Move, RotateCw, Scaling, MousePointer, Layers, Cpu, Boxes, Network, Eye } from 'lucide-react';
 import { SerializationManager, AutosaveState } from '../utils/SerializationManager';
 import { useStore } from '../store/useStore';
 
@@ -16,6 +16,14 @@ export function StatusBar(): React.JSX.Element {
   const snapValue = useStore((s) => s.snapValue);
   const showPhysicsDebug = useStore((s) => s.showPhysicsDebug);
   const togglePhysicsDebug = useStore((s) => s.togglePhysicsDebug);
+  const spatialPartitioningEnabled = useStore((s) => s.spatialPartitioningEnabled);
+  const toggleSpatialPartitioning = useStore((s) => s.toggleSpatialPartitioning);
+  const spatialStructureType = useStore((s) => s.spatialStructureType);
+  const frustumCullingEnabled = useStore((s) => s.frustumCullingEnabled);
+  const toggleFrustumCulling = useStore((s) => s.toggleFrustumCulling);
+  const showSpatialDebug = useStore((s) => s.showSpatialDebug);
+  const toggleSpatialDebug = useStore((s) => s.toggleSpatialDebug);
+  const spatialStats = useStore((s) => s.spatialStats);
 
   useEffect(() => {
     const unsubscribe = SerializationManager.subscribeAutosave((state) => {
@@ -151,6 +159,40 @@ export function StatusBar(): React.JSX.Element {
             {workspaceMode}
           </span>
         </div>
+
+        <div className="h-3 w-px bg-neutral-800" />
+
+        {/* Spatial Culling & Acceleration Indicator */}
+        <button
+          onClick={toggleFrustumCulling}
+          className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-all cursor-pointer ${
+            frustumCullingEnabled && spatialPartitioningEnabled
+              ? 'bg-sky-500/20 text-sky-300 font-bold border border-sky-500/40 shadow-[0_0_8px_rgba(14,165,233,0.2)]'
+              : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/60 border border-transparent'
+          }`}
+          title={`Spatial Partitioning (${spatialStructureType.toUpperCase()}): ${
+            frustumCullingEnabled ? `Active (${spatialStats.visible}/${spatialStats.total} visible, ${spatialStats.culled} culled)` : 'Disabled'
+          }. Click to toggle frustum culling.`}
+        >
+          <Eye size={11} className={frustumCullingEnabled && spatialPartitioningEnabled ? 'text-sky-400' : 'text-neutral-500'} />
+          <span className="text-[9.5px]">
+            {spatialStructureType.toUpperCase()}: {frustumCullingEnabled && spatialPartitioningEnabled ? `${spatialStats.visible}/${spatialStats.total}` : 'OFF'}
+          </span>
+        </button>
+
+        {/* Spatial Debug Wireframe Toggle */}
+        <button
+          onClick={toggleSpatialDebug}
+          className={`flex items-center gap-1 px-1.5 py-0.5 rounded transition-all cursor-pointer ${
+            showSpatialDebug
+              ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 shadow-[0_0_8px_rgba(245,158,11,0.2)]'
+              : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/60 border border-transparent'
+          }`}
+          title="Toggle 3D Spatial Partitioning (Octree/BVH) Bounding Wireframes"
+        >
+          <Network size={11} className={showSpatialDebug ? 'text-amber-400 animate-pulse' : 'text-neutral-500'} />
+          <span className="text-[9.5px]">Spatial: {showSpatialDebug ? 'ON' : 'OFF'}</span>
+        </button>
 
         <div className="h-3 w-px bg-neutral-800" />
 

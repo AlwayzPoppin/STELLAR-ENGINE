@@ -50,6 +50,8 @@ import {
   BoxSelect,
   LayoutTemplate,
   Boxes,
+  Network,
+  Eye,
 } from 'lucide-react';
 import { useStore as useZustandStore } from 'zustand';
 import { useStore } from '../store/useStore';
@@ -89,6 +91,14 @@ function TopBar() {
     toggleWireframeMode,
     showPhysicsDebug,
     togglePhysicsDebug,
+    spatialPartitioningEnabled,
+    toggleSpatialPartitioning,
+    spatialStructureType,
+    setSpatialStructureType,
+    frustumCullingEnabled,
+    toggleFrustumCulling,
+    showSpatialDebug,
+    toggleSpatialDebug,
     activeTool,
     setActiveTool,
     undo,
@@ -719,6 +729,21 @@ function TopBar() {
           <div className="h-4 w-px bg-neutral-800/60 mx-0.5" />
 
           <button
+            onClick={toggleSpatialDebug}
+            className={`p-1.5 transition-all duration-150 cursor-pointer rounded-md border ${
+              showSpatialDebug
+                ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.25)] ring-1 ring-amber-500/30'
+                : 'text-neutral-400 hover:text-neutral-200 border-transparent hover:bg-neutral-800/60'
+            }`}
+            title={showSpatialDebug ? 'Hide Spatial Partitioning Wireframe Hierarchy (Octree/BVH)' : 'Show Spatial Partitioning Wireframe Hierarchy (Octree/BVH)'}
+            aria-pressed={showSpatialDebug}
+          >
+            <Network size={14} className={showSpatialDebug ? 'text-amber-400 animate-pulse' : ''} />
+          </button>
+
+          <div className="h-4 w-px bg-neutral-800/60 mx-0.5" />
+
+          <button
             onClick={toggleGrid}
             className={`p-1.5 transition-colors cursor-pointer rounded-md ${showGrid ? 'text-sky-400' : 'text-neutral-400 hover:text-neutral-200'}`}
             title="Toggle Scene Grid View"
@@ -935,6 +960,11 @@ function EnginePreferencesModal() {
   const setPreferencesModalOpen = useStore((s) => s.setPreferencesModalOpen);
   const prefs = useStore((s) => s.enginePreferences);
   const updatePrefs = useStore((s) => s.updateEnginePreferences);
+  const spatialPartitioningEnabled = useStore((s) => s.spatialPartitioningEnabled);
+  const spatialStructureType = useStore((s) => s.spatialStructureType);
+  const setSpatialStructureType = useStore((s) => s.setSpatialStructureType);
+  const frustumCullingEnabled = useStore((s) => s.frustumCullingEnabled);
+  const toggleFrustumCulling = useStore((s) => s.toggleFrustumCulling);
 
   if (!isPreferencesModalOpen) return null;
 
@@ -995,6 +1025,34 @@ function EnginePreferencesModal() {
               <option value="1.25">🎨 High (1.25x Resolution) - Crisp View</option>
               <option value="1.5">🎬 Ultra (1.5x Resolution) - Supersampling</option>
             </select>
+          </div>
+
+          {/* Spatial Partitioning & Frustum Culling Acceleration */}
+          <div className="flex flex-col gap-2 bg-neutral-900/40 p-3 rounded-lg border border-border/40">
+            <div className="flex items-center justify-between">
+              <div className="flex flex-col">
+                <span className="text-white font-medium">Frustum Culling & Spatial Acceleration</span>
+                <span className="text-[10px] text-text-secondary">Hierarchical culling of off-screen objects via spatial index</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={frustumCullingEnabled && spatialPartitioningEnabled}
+                onChange={toggleFrustumCulling}
+                className="w-4 h-4 rounded border-border bg-bg-deep text-sky-400 accent-sky-400 cursor-pointer"
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-1 border-t border-border/20">
+              <span className="text-xs text-neutral-300 font-mono">Acceleration Structure</span>
+              <select
+                className="bg-bg-deep border border-border text-white px-2 py-1 rounded font-mono text-xs focus:border-accent outline-none cursor-pointer"
+                value={spatialStructureType}
+                onChange={(e) => setSpatialStructureType(e.target.value as 'octree' | 'bvh')}
+              >
+                <option value="octree">🌳 Loose Octree (Dynamic 8-Octant)</option>
+                <option value="bvh">📦 Binary BVH (Centroid Split)</option>
+              </select>
+            </div>
           </div>
 
           {/* Sun Shafts Toggle */}

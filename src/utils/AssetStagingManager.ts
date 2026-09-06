@@ -67,7 +67,9 @@ class AssetStagingManagerClass {
       lowerUrl.endsWith('.png') ||
       lowerUrl.endsWith('.jpg') ||
       lowerUrl.endsWith('.jpeg') ||
-      lowerUrl.endsWith('.webp')
+      lowerUrl.endsWith('.webp') ||
+      lowerUrl.endsWith('.ktx2') ||
+      lowerUrl.endsWith('.basis')
     ) {
       normalizedType = 'texture';
     }

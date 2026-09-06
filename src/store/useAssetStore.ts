@@ -28,6 +28,8 @@ export function processImportedFile(file: File): Promise<Asset> {
       lowerName.endsWith('.jpg') ||
       lowerName.endsWith('.jpeg') ||
       lowerName.endsWith('.webp') ||
+      lowerName.endsWith('.ktx2') ||
+      lowerName.endsWith('.basis') ||
       file.type.startsWith('image/')
     ) {
       type = 'image';

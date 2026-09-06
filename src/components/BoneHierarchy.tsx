@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore, BoneNode } from '../store/useStore';
 import { toast } from '../store/useToastStore';
-import { ChevronDown, ChevronRight, Search, Target, FolderTree, Folder, Eye, EyeOff, Plus, Trash2, PenLine, Copy } from 'lucide-react';
+import { FACIAL_LANDMARKS } from '../utils/FacialLandmarks';
+import { ChevronDown, ChevronRight, Search, Target, FolderTree, Folder, Eye, EyeOff, Plus, Trash2, PenLine, Copy, Sparkles, Smile } from 'lucide-react';
 
 // ─── Bone Context Menu ───────────────────────────────────────────────────────
 interface BoneContextMenuProps {
@@ -288,27 +289,50 @@ export default function BoneHierarchy() {
   const riggingSymmetry = useStore((s) => s.riggingSymmetry);
   const setRiggingSymmetry = useStore((s) => s.setRiggingSymmetry);
   const objects = useStore((s) => s.objects);
+  const selectedIds = useStore((s) => s.selectedIds);
   const modelAnimations = useStore((s) => s.modelAnimations);
   const animationTargetId = useStore((s) => s.animationTargetId);
   const isSkeletonUnbound = useStore((s) => s.isSkeletonUnbound);
+  const facialWizardState = useStore((s) => s.facialWizardState);
   const activeClonedScene = useStore((s) => s.activeClonedScene);
   const cloneActiveAnimation = useStore((s) => s.cloneActiveAnimation);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [animationsExpanded, setAnimationsExpanded] = useState(true);
+  const [facialExpanded, setFacialExpanded] = useState(true);
   const [hideFingers, setHideFingers] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; boneName: string } | null>(null);
 
+  const targetObj = useMemo(() => {
+    if (animationTargetId) {
+      const found = objects.find((o) => o.id === animationTargetId);
+      if (found) return found;
+    }
+    if (selectedIds.length === 1) {
+      const found = objects.find((o) => o.id === selectedIds[0]);
+      if (found) return found;
+    }
+    return objects.find(
+      (o) =>
+        ['mesh', 'gltf', 'obj', 'fbx', 'csg', 'group'].includes(o.type) &&
+        !o.id.startsWith('obj_sun') &&
+        !o.id.startsWith('obj_moon')
+    );
+  }, [objects, animationTargetId, selectedIds]);
+
+  const targetId = targetObj?.id || null;
+
   const activeAnimation = useMemo(() => {
-    const obj = objects.find((o) => o.id === animationTargetId);
-    return obj?.activeAnimation || null;
-  }, [objects, animationTargetId]);
+    return targetObj?.activeAnimation || null;
+  }, [targetObj]);
 
   const clips = useMemo(() => {
-    if (!animationTargetId) return [];
-    const obj = objects.find((o) => o.id === animationTargetId);
-    return obj?.availableAnimations || modelAnimations[animationTargetId] || [];
-  }, [objects, modelAnimations, animationTargetId]);
+    if (!targetId || !targetObj) return [];
+    const base = targetObj.availableAnimations || modelAnimations[targetId] || [];
+    const custom = targetObj.customAnimations ? Object.keys(targetObj.customAnimations) : [];
+    const merged = Array.from(new Set([...base, ...custom]));
+    return merged.filter((name) => name !== 'None');
+  }, [targetObj, targetId, modelAnimations]);
 
   const processedSkeleton = useMemo(() => {
     return transformSkeletonWithFingerFolders(activeSkeleton, hideFingers);
@@ -534,6 +558,70 @@ export default function BoneHierarchy() {
           </div>
         )}
 
+        {/* Facial Control Points & Rig Section */}
+        {(targetObj?.hasFacialRig || Object.keys(facialWizardState.placedLandmarks).length > 0 || targetObj?.userData?.facialLandmarks) && (
+          <div className="border-b border-border/40 pb-2 mb-2">
+            <div
+              onClick={() => setFacialExpanded(!facialExpanded)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-neutral-400 hover:text-white cursor-pointer select-none text-[10px] font-bold uppercase tracking-wider"
+            >
+              <div className="shrink-0 text-cyan-400">
+                {facialExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </div>
+              <Smile size={12} className="text-cyan-400" />
+              <span className="text-cyan-300">Facial Control Rig</span>
+              <span className="ml-auto text-[9px] font-mono bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 px-1 rounded-sm">
+                {Object.keys(facialWizardState.placedLandmarks).length > 0
+                  ? `${Object.keys(facialWizardState.placedLandmarks).length} Mapped`
+                  : '12 Bones'}
+              </span>
+            </div>
+
+            {facialExpanded && (
+              <div className="flex flex-col gap-0.5 px-1 mt-1">
+                {FACIAL_LANDMARKS.map((lm) => {
+                  const placedPos =
+                    facialWizardState.placedLandmarks[lm.key] ||
+                    (targetObj?.userData?.facialLandmarks && targetObj.userData.facialLandmarks[lm.key]);
+                  const isPlaced = !!placedPos;
+                  const isSelected = selectedBoneId === lm.boneName;
+
+                  return (
+                    <div
+                      key={lm.key}
+                      onClick={() => {
+                        setSelectedBoneId(lm.boneName);
+                        useStore.getState().setFacialFocusMode(true);
+                      }}
+                      className={`group flex items-center justify-between w-full cursor-pointer select-none py-1 px-2.5 rounded transition-all text-xs ${
+                        isSelected
+                          ? 'bg-cyan-600/25 text-cyan-200 font-bold border border-cyan-500/40 shadow-[0_0_8px_rgba(6,182,212,0.2)]'
+                          : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isPlaced ? 'bg-cyan-400 shadow-sm shadow-cyan-400/50' : 'bg-neutral-600'}`} />
+                        <span className="font-mono text-[11px] truncate">{lm.label}</span>
+                        <span className="text-[9px] text-neutral-500 font-mono hidden sm:inline">({lm.boneName.replace('Face_', '')})</span>
+                      </div>
+
+                      {placedPos ? (
+                        <span className="text-[8px] font-mono bg-neutral-900/80 text-cyan-300/80 px-1.5 py-0.5 rounded border border-cyan-500/20 shrink-0 ml-1">
+                          {placedPos[0].toFixed(2)}, {placedPos[1].toFixed(2)}, {placedPos[2].toFixed(2)}
+                        </span>
+                      ) : (
+                        <span className="text-[8px] font-mono text-neutral-600 uppercase shrink-0">
+                          default
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Bone Tree */}
         {processedSkeleton.length > 0 ? (
           processedSkeleton.map((rootNode) => (
@@ -545,6 +633,11 @@ export default function BoneHierarchy() {
               onContextMenu={handleBoneContextMenu}
             />
           ))
+        ) : (targetObj?.hasFacialRig || Object.keys(facialWizardState.placedLandmarks).length > 0) ? (
+          <div className="p-3 text-center text-text-secondary text-[11px]">
+            <p className="text-cyan-300 font-semibold mb-1">Facial Rig Active</p>
+            <p className="text-[10px] text-text-secondary">Click on any facial control point above to select and animate it on the timeline.</p>
+          </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-neutral-400 text-xs gap-3 bg-[#13131c]/60 rounded-xl border border-neutral-800/60 m-3 shadow-inner">
             <div className="w-10 h-10 rounded-full bg-fuchsia-500/10 border border-fuchsia-500/30 flex items-center justify-center text-fuchsia-400 shadow-[0_0_12px_rgba(217,70,239,0.15)]">
@@ -552,10 +645,38 @@ export default function BoneHierarchy() {
             </div>
             <div className="flex flex-col gap-1">
               <span className="font-bold text-white text-xs tracking-wide">No Skeleton Bones Detected</span>
-              <span className="text-[10px] text-neutral-400 max-w-[200px] leading-relaxed font-mono">
-                Select a rigged 3D character mesh (.GLB / .FBX) in the scene to inspect and manipulate its bone hierarchy.
+              <span className="text-[10px] text-neutral-400 max-w-[220px] leading-relaxed font-mono">
+                {targetObj
+                  ? `"${targetObj.name}" does not have a skeleton. Add a root bone or generate a basic rig to start animating.`
+                  : 'Select an object or model in the scene to inspect and manipulate its bone hierarchy.'}
               </span>
             </div>
+
+            {targetObj && (
+              <div className="flex flex-col gap-2 w-full mt-2">
+                <button
+                  onClick={() => {
+                    const name = prompt('Root bone name:', 'Root');
+                    if (name && name.trim()) {
+                      useStore.getState().addRootBoneToRig(targetObj.id, name.trim());
+                    }
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-fuchsia-600 hover:bg-fuchsia-500 text-white text-[11px] font-bold uppercase rounded shadow-md transition-colors cursor-pointer"
+                >
+                  <Plus size={13} />
+                  Add Root Bone
+                </button>
+                <button
+                  onClick={() => {
+                    useStore.getState().generateBasicRig(targetObj.id);
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border border-neutral-700 text-[11px] font-bold uppercase rounded transition-colors cursor-pointer"
+                >
+                  <Sparkles size={13} className="text-amber-400" />
+                  Auto-Rig Basic Skeleton
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -583,6 +704,19 @@ export default function BoneHierarchy() {
               Clear Selection
             </button>
           </>
+        ) : targetObj ? (
+          <button
+            onClick={() => {
+              const name = prompt('Root bone name:', 'Root');
+              if (name && name.trim()) {
+                useStore.getState().addRootBoneToRig(targetObj.id, name.trim());
+              }
+            }}
+            className="flex items-center gap-1 text-[10px] font-bold text-fuchsia-400 hover:text-fuchsia-300 transition-colors uppercase cursor-pointer bg-fuchsia-500/10 hover:bg-fuchsia-500/20 px-2 py-1 rounded border border-fuchsia-500/20"
+          >
+            <Plus size={10} />
+            Add Root Bone
+          </button>
         ) : (
           <span className="text-[10px] text-neutral-600 font-mono">Right-click a bone for options</span>
         )}
